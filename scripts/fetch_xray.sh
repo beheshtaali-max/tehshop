@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+VERSION="${XRAY_VERSION:-26.9.8}"
+BASE="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$ROOT/v2ray/src/main/assets/xray/arm64-v8a"
+ABI="arm64-v8a"
+  archive="/tmp/Xray-android-${ABI}.zip"
+  tmp="$(mktemp -d)"
+  curl -fL --retry 3 -o "$archive" "$BASE/Xray-android-${ABI}.zip"
+  unzip -oq "$archive" -d "$tmp"
+  bin="$(find "$tmp" -type f -name xray | head -n1)"
+  test -n "$bin"
+  cp "$bin" "$ROOT/v2ray/src/main/assets/xray/$ABI/xray"
+  chmod 755 "$ROOT/v2ray/src/main/assets/xray/$ABI/xray"
+  rm -rf "$tmp"

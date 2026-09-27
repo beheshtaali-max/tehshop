@@ -1,0 +1,5 @@
+-keep class libcore.** { *; }
+-keep class go.** { *; }
+-keep class dev.dev7.lib.v2ray.** { *; }
+-dontwarn libcore.**
+-dontwarn go.**

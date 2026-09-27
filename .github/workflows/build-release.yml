@@ -1,0 +1,71 @@
+name: Build TehVPN Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download official Xray Android binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="26.9.8"
+          BASE="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}"
+          mkdir -p v2ray/src/main/assets/xray/arm64-v8a
+          ABI="arm64-v8a"
+          ARCHIVE="Xray-android-${ABI}.zip"
+          curl -fL --retry 3 -o "/tmp/${ARCHIVE}" "${BASE}/${ARCHIVE}"
+          rm -rf "/tmp/xray-${ABI}"
+          mkdir -p "/tmp/xray-${ABI}"
+          unzip -oq "/tmp/${ARCHIVE}" -d "/tmp/xray-${ABI}"
+          BIN="$(find "/tmp/xray-${ABI}" -type f -name xray -perm -u+x | head -n1)"
+          if [ -z "${BIN}" ]; then
+            BIN="$(find "/tmp/xray-${ABI}" -type f -name xray | head -n1)"
+          fi
+          test -n "${BIN}"
+          cp "${BIN}" "v2ray/src/main/assets/xray/${ABI}/xray"
+          chmod 755 "v2ray/src/main/assets/xray/${ABI}/xray"
+          file v2ray/src/main/assets/xray/arm64-v8a/xray
+
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n1)"
+          test -n "${APK}"
+          cp "${APK}" "release/TehVPN-XHTTP-1.010-release.apk"
+          sha256sum "release/TehVPN-XHTTP-1.010-release.apk" > release/SHA256SUMS.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TehVPN-XHTTP-release
+          path: release/*
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

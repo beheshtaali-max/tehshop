@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "796675840716",
+    "project_id": "seven-vpn-a94af",
+    "storage_bucket": "seven-vpn-a94af.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:796675840716:android:489b080d5d3e1c0c1ac069",
+        "android_client_info": {
+          "package_name": "pw.tehvpnn.android"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQfVtw_5xTQ-l-Bltj73272PjRVlhNqjM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:796675840716:android:b82e7997833ef0041ac069",
+        "android_client_info": {
+          "package_name": "pw.se7envpn.android"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQfVtw_5xTQ-l-Bltj73272PjRVlhNqjM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
