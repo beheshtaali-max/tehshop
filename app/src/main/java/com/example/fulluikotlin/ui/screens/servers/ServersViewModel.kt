@@ -62,7 +62,11 @@ class ServersViewModel(
             val ping = when (protocol) {
                 ProtocolType.V2RAY -> getV2rayPing(config)
                 ProtocolType.SSH -> getSshTcpPing(config, fallbackIp)
-                else -> getXhttpPing(config, fallbackIp)
+                else -> if (config.contains("type=xhttp", ignoreCase = true)) {
+                    getXhttpPing(config, fallbackIp)
+                } else {
+                    PING_NOT_AVAILABLE
+                }
             }
 
             pingCache[cacheKey] = ping
