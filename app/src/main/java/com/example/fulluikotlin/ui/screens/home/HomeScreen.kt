@@ -1,7 +1,5 @@
 package com.example.fulluikotlin.ui.screens.home
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.LocalActivity
@@ -9,7 +7,6 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,18 +20,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -42,7 +35,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,16 +52,12 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.blongho.country_data.World
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import pw.fullvpn.android.R
 import com.example.fulluikotlin.domain.model.ConnectionState
 import com.example.fulluikotlin.domain.model.Server
 import com.example.fulluikotlin.ui.theme.FullKotlinTheme
 import com.example.fulluikotlin.ui.theme.fullColors
-import java.io.File
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -87,44 +75,6 @@ fun HomeScreen(
     val isIpLoading by viewModel.isIpLoading.collectAsState()
     val totalDownloadBytes by viewModel.totalDownloadBytes.collectAsState()
     val totalUploadBytes by viewModel.totalUploadBytes.collectAsState()
-
-    var showDebugLog by remember { mutableStateOf(false) }
-    var debugLogText by remember { mutableStateOf("") }
-
-    val debugScope = rememberCoroutineScope()
-
-    fun loadDebugLog() {
-        debugScope.launch {
-            debugLogText = withContext(Dispatchers.IO) {
-                val logFile = File(context.filesDir, "logs/teh-vpn.log")
-
-                if (logFile.exists()) {
-                    runCatching {
-                        logFile.readText()
-                    }.getOrElse {
-                        "Unable to read debug log:\n${it.message}"
-                    }
-                } else {
-                    "No debug log found.\n\nExpected file:\n${logFile.absolutePath}"
-                }
-            }
-
-            showDebugLog = true
-        }
-    }
-
-    fun clearDebugLog() {
-        debugScope.launch {
-            withContext(Dispatchers.IO) {
-                File(
-                    context.filesDir,
-                    "logs/teh-vpn.log"
-                ).delete()
-            }
-
-            debugLogText = "Log cleared."
-        }
-    }
 
     DisposableEffect(Unit) {
         viewModel.registerStatsReceiver(context)
@@ -212,89 +162,7 @@ fun HomeScreen(
                 modifier = Modifier.height(18.dp)
             )
 
-            Text(
-                text = "XHTTP Debug Log",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        loadDebugLog()
-                    }
-                    .padding(vertical = 12.dp),
-                color = MaterialTheme.fullColors.pingText,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.bodyMedium
-            )
         }
-    }
-
-    if (showDebugLog) {
-        AlertDialog(
-            onDismissRequest = {
-                showDebugLog = false
-            },
-            title = {
-                Text(
-                    text = "XHTTP Debug Log",
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = debugLogText,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(450.dp)
-                        .verticalScroll(
-                            rememberScrollState()
-                        ),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val clipboard =
-                            context.getSystemService(
-                                ClipboardManager::class.java
-                            )
-
-                        clipboard?.setPrimaryClip(
-                            ClipData.newPlainText(
-                                "XHTTP Debug Log",
-                                debugLogText
-                            )
-                        )
-
-                        Toast.makeText(
-                            context,
-                            "Log copied",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                ) {
-                    Text("Copy")
-                }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        onClick = {
-                            clearDebugLog()
-                        }
-                    ) {
-                        Text("Clear")
-                    }
-
-                    TextButton(
-                        onClick = {
-                            showDebugLog = false
-                        }
-                    ) {
-                        Text("Close")
-                    }
-                }
-            }
-        )
     }
 }
 
