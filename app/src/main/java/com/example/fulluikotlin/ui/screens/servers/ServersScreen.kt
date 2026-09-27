@@ -541,18 +541,15 @@ fun ItemsServer(
 
     /*
      * XHTTP به صورت ProtocolType جداگانه تعریف نشده است.
-     * بنابراین از خود کانفیگ تشخیص داده می‌شود.
+     *
+     * تمام V2RAY ها وارد مسیر Ping می‌شوند.
+     *
+     * خود ServersViewModel کانفیگ را decrypt می‌کند
+     * و تشخیص می‌دهد که کانفیگ XHTTP است یا V2Ray معمولی.
      */
-    val isXhttpServer =
-        server.config.contains(
-            "type=xhttp",
-            ignoreCase = true
-        )
-
     val shouldShowPing =
         server.protocol == ProtocolType.V2RAY ||
-        server.protocol == ProtocolType.SSH ||
-        isXhttpServer
+        server.protocol == ProtocolType.SSH
 
     var currentPing by remember(
         server.id,
@@ -581,15 +578,11 @@ fun ItemsServer(
             return@LaunchedEffect
         }
 
-        currentPing =
-            if (
-                server.protocol == ProtocolType.SSH ||
-                isXhttpServer
-            ) {
-                "..."
-            } else {
-                server.defaultPing
-            }
+        /*
+         * برای SSH و V2Ray/XHTTP ابتدا حالت
+         * loading نمایش داده می‌شود.
+         */
+        currentPing = "..."
 
         val realPing =
             viewModel.getRealPing(
