@@ -23,38 +23,115 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # ============================================================
+      # Prepare release signing key
+      # ============================================================
       - name: Prepare release signing key
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          set -e
+
+          echo "========================================"
+          echo "PREPARING RELEASE SIGNING KEY"
+          echo "========================================"
+
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is empty"
+            exit 1
+          fi
+
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > /tmp/release-key.key
+
           chmod 600 /tmp/release-key.key
 
           echo "Release signing key prepared"
           ls -lh /tmp/release-key.key
 
+          echo "File type:"
+          file /tmp/release-key.key
+
+          echo "========================================"
+
+      # ============================================================
+      # Inspect keystore
+      # ============================================================
+      - name: Inspect release keystore
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "========================================"
+          echo "KEYSTORE INSPECTION"
+          echo "========================================"
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_PASSWORD secret is empty"
+            exit 1
+          fi
+
+          echo ""
+          echo "Trying JKS/PKCS12 keystore inspection..."
+          echo ""
+
+          keytool -list \
+            -v \
+            -keystore /tmp/release-key.key \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            2>&1 || true
+
+          echo ""
+          echo "========================================"
+          echo "END KEYSTORE INSPECTION"
+          echo "========================================"
+
+      # ============================================================
+      # Download Xray Android ARM64
+      # ============================================================
       - name: Download Xray Android ARM64
         shell: bash
         run: |
+          set -e
+
           mkdir -p v2ray/src/main/assets/xray/arm64-v8a
 
-          curl -L \
+          curl -fL \
             -o /tmp/xray.zip \
             https://github.com/XTLS/Xray-core/releases/download/v26.9.8/Xray-android-arm64-v8a.zip
 
           unzip -o /tmp/xray.zip -d /tmp/xray
 
-          find /tmp/xray -type f -name xray -exec cp {} v2ray/src/main/assets/xray/arm64-v8a/xray \;
+          find /tmp/xray \
+            -type f \
+            -name xray \
+            -exec cp {} v2ray/src/main/assets/xray/arm64-v8a/xray \;
 
           chmod +x v2ray/src/main/assets/xray/arm64-v8a/xray
 
+          echo "========================================"
+          echo "XRAY ARM64"
+          echo "========================================"
+
+          ls -lh v2ray/src/main/assets/xray/arm64-v8a/xray
+
+          file v2ray/src/main/assets/xray/arm64-v8a/xray
+
+      # ============================================================
+      # Gradle permission
+      # ============================================================
       - name: Fix Gradle permission
         shell: bash
         run: |
+          set -e
+
           chmod +x ./gradlew
+
           ./gradlew --version
 
+      # ============================================================
+      # Build release APK
+      # ============================================================
       - name: Build release APK
         shell: bash
         env:
@@ -62,18 +139,59 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          set -e
 
-      # بررسی نام پکیج و versionCode
+          echo "========================================"
+          echo "BUILD RELEASE APK"
+          echo "========================================"
+
+          echo "Keystore path:"
+          echo "$ANDROID_KEYSTORE_PATH"
+
+          echo "Alias:"
+          echo "$ANDROID_KEY_ALIAS"
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "ERROR: Android keystore password is empty"
+            exit 1
+          fi
+
+          if [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "ERROR: ANDROID_KEY_ALIAS is empty"
+            exit 1
+          fi
+
+          chmod +x ./gradlew
+
+          ./gradlew \
+            :app:assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      # ============================================================
+      # Inspect APK package information
+      # ============================================================
       - name: Inspect release APK package
         shell: bash
         run: |
-          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          set -e
+
+          APK=$(find app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Release APK not found"
+            exit 1
+          fi
 
           echo "========================================"
-          echo "APK: $APK"
+          echo "APK PACKAGE INFORMATION"
           echo "========================================"
+
+          echo "APK:"
+          echo "$APK"
 
           AAPT2=$(find "$ANDROID_HOME/build-tools" \
             -type f \
@@ -81,16 +199,35 @@ jobs:
             | sort -V \
             | tail -n 1)
 
-          echo "AAPT2: $AAPT2"
+          echo ""
+          echo "AAPT2:"
+          echo "$AAPT2"
 
-          echo "========== APK PACKAGE INFO =========="
-          "$AAPT2" dump badging "$APK" | head -n 10
+          echo ""
+          echo "========== APK BADGING =========="
 
-      # بررسی امضای APK
+          "$AAPT2" dump badging "$APK"
+
+          echo ""
+          echo "========================================"
+
+      # ============================================================
+      # Verify APK signing
+      # ============================================================
       - name: Verify release APK signing
         shell: bash
         run: |
-          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          set -e
+
+          APK=$(find app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Release APK not found"
+            exit 1
+          fi
 
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
             -type f \
@@ -102,32 +239,72 @@ jobs:
           echo "APK SIGNING INFORMATION"
           echo "========================================"
 
-          echo "APK: $APK"
-          echo "APKSIGNER: $APKSIGNER"
+          echo "APK:"
+          echo "$APK"
+
+          echo ""
+          echo "APKSIGNER:"
+          echo "$APKSIGNER"
+
+          echo ""
+          echo "========== VERIFY =========="
 
           "$APKSIGNER" verify \
             --verbose \
             --print-certs \
             "$APK"
 
+          echo ""
+          echo "========================================"
+
+      # ============================================================
+      # Prepare release files
+      # ============================================================
       - name: Prepare release files
         shell: bash
         run: |
+          set -e
+
           mkdir -p release
 
-          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          APK=$(find app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)
 
-          cp "$APK" release/TehVPN-XHTTP-1.010-release.apk
+          if [ -z "$APK" ]; then
+            echo "ERROR: Release APK not found"
+            exit 1
+          fi
 
-          sha256sum release/TehVPN-XHTTP-1.010-release.apk \
+          cp "$APK" \
+            release/TehVPN-XHTTP-1.010-release.apk
+
+          sha256sum \
+            release/TehVPN-XHTTP-1.010-release.apk \
             > release/SHA256SUMS.txt
 
+          echo "========================================"
+          echo "RELEASE FILES"
+          echo "========================================"
+
+          ls -lh release/
+
+          echo ""
+          cat release/SHA256SUMS.txt
+
+      # ============================================================
+      # Upload artifact
+      # ============================================================
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: TehVPN-XHTTP-release
           path: release/
 
+      # ============================================================
+      # GitHub Release
+      # ============================================================
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
