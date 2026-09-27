@@ -1,4 +1,3 @@
-```kotlin
 package com.example.fulluikotlin.ui.screens.servers
 
 import android.util.Log
@@ -923,4 +922,4 @@ class ServersViewModel(
             -1L
     }
 }
-```
+
