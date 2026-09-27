@@ -89,7 +89,10 @@ public final class XraySidecar {
 
         long deadline = System.currentTimeMillis() + 5000;
         while (System.currentTimeMillis() < deadline) {
-            if (!process.isAlive()) throw new IllegalStateException("Xray sidecar exited immediately");
+            if (!process.isAlive()) {
+                throw new IllegalStateException("Xray sidecar exited immediately (exit=" + process.exitValue()
+                        + "). See logcat tag XraySidecar for the Xray error.");
+            }
             if (canConnectLocalhost(SOCKS_PORT)) {
                 SafeLog.i(TAG, "Xray sidecar ready on 127.0.0.1:" + SOCKS_PORT);
                 return;
@@ -172,11 +175,12 @@ public final class XraySidecar {
         if (notEmpty(q.get("mode"))) xhttp.put("mode", q.get("mode"));
         if (notEmpty(q.get("host"))) xhttp.put("host", q.get("host"));
         if (notEmpty(q.get("extra"))) {
-            String extra = q.get("extra");
-            try { xhttp.put("extra", new JSONObject(extra)); }
-            catch (Exception e) {
-                try { xhttp.put("extra", new JSONObject(urlDecode(extra))); } catch (Exception ignored) {}
-            }
+            JSONObject extra = parseXhttpExtra(q.get("extra"));
+            // scMaxConcurrentPosts was used by some older/custom XHTTP configs,
+            // but is not a current Xray client option for packet-up. Do not pass
+            // it through to a newer core where it can make config validation fail.
+            extra.remove("scMaxConcurrentPosts");
+            xhttp.put("extra", extra);
         }
         stream.put("xhttpSettings", xhttp);
         out.put("streamSettings", stream);
@@ -226,10 +230,30 @@ public final class XraySidecar {
 
     private static void drainAsync(final InputStream input) {
         new Thread(() -> {
-            try (InputStream in = new BufferedInputStream(input)) {
-                byte[] b = new byte[4096]; while (in.read(b) != -1) {}
-            } catch (Exception ignored) {}
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(input, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    SafeLog.e(TAG, "xray: " + line);
+                }
+            } catch (Exception e) {
+                SafeLog.w(TAG, "Xray log reader stopped", e);
+            }
         }, "xray-log-reader").start();
+    }
+
+    private static JSONObject parseXhttpExtra(String raw) throws Exception {
+        String value = raw == null ? "" : raw.trim();
+        try {
+            return new JSONObject(value);
+        } catch (Exception first) {
+            // Some share links URL-encode a JSON value with a leading '+', e.g.
+            // ":+1000000" or ":+false". After URL decoding that is still a
+            // literal '+', but JSON does not permit a leading plus. Normalize it
+            // without decoding the whole value a second time.
+            String normalized = value.replaceAll("([:,]\\s*)\\+", "$1");
+            return new JSONObject(normalized);
+        }
     }
 
     private static boolean canConnectLocalhost(int port) {

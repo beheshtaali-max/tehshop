@@ -130,6 +130,7 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     @Override
     public void onCreate() {
         super.onCreate();
+        SafeLog.init(this);
         SafeLog.i(TAG, "onCreate package=" + getPackageName() + " pid=" + android.os.Process.myPid());
         V2rayConfigs.connectionState = V2rayConstants.CONNECTION_STATES.CONNECTING;
 
