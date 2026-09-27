@@ -1,6 +1,5 @@
 package com.example.fulluikotlin.ui.screens.servers
 
-import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,8 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -57,11 +54,11 @@ import androidx.navigation.compose.rememberNavController
 import com.blongho.country_data.World
 import com.example.fulluikotlin.domain.model.ProtocolType
 import com.example.fulluikotlin.ui.screens.protocols.ProtocolBottomSheet
+import com.example.fulluikotlin.ui.theme.FullKotlinTheme
+import com.example.fulluikotlin.ui.theme.fullColors
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import pw.fullvpn.android.R
-import com.example.fulluikotlin.ui.theme.FullKotlinTheme
-import com.example.fulluikotlin.ui.theme.fullColors
 
 @Composable
 fun ServersScreen(
@@ -79,7 +76,7 @@ fun ServersScreen(
         organized?.data?.keys?.mapNotNull { protocolName ->
             try {
                 ProtocolType.valueOf(protocolName.uppercase())
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
         } ?: emptyList()
@@ -100,43 +97,60 @@ fun ServersScreen(
 
             groups.map { groupName ->
                 val serversInGroup =
-                    organized!!.getServers(protocolName, groupName)
+                    organized!!.getServers(
+                        protocolName,
+                        groupName
+                    )
 
                 NationaltyServer(
                     name = groupName,
                     numServer = serversInGroup.size,
 
-                    bestPing = if (selectedProtocol == ProtocolType.V2RAY) {
-                        serversInGroup.minOfOrNull {
-                            it.serversignal.toIntOrNull() ?: Int.MAX_VALUE
-                        }?.let { "$it ms" } ?: "N/A"
-                    } else {
-                        ""
-                    },
+                    bestPing =
+                        if (selectedProtocol == ProtocolType.V2RAY) {
+                            serversInGroup.minOfOrNull {
+                                it.serversignal.toIntOrNull()
+                                    ?: Int.MAX_VALUE
+                            }?.let {
+                                "$it ms"
+                            } ?: "N/A"
+                        } else {
+                            ""
+                        },
 
-                    flag = getFlagResIdForGroup(groupName),
+                    flag =
+                        getFlagResIdForGroup(
+                            groupName
+                        ),
 
-                    servers = serversInGroup.map { server ->
-                        ServerItem(
-                            id = server.serverid,
-                            name = server.servername,
+                    servers =
+                        serversInGroup.map { server ->
 
-                            defaultPing = when (server.protocol) {
-                                ProtocolType.V2RAY ->
-                                    "${server.serversignal} ms"
+                            ServerItem(
+                                id = server.serverid,
 
-                                ProtocolType.SSH ->
-                                    "..."
+                                name = server.servername,
 
-                                else ->
-                                    ""
-                            },
+                                defaultPing =
+                                    when (server.protocol) {
 
-                            ip = server.ip,
-                            config = server.config,
-                            protocol = server.protocol
-                        )
-                    }
+                                        ProtocolType.V2RAY ->
+                                            "${server.serversignal} ms"
+
+                                        ProtocolType.SSH ->
+                                            "..."
+
+                                        else ->
+                                            ""
+                                    },
+
+                                ip = server.ip,
+
+                                config = server.config,
+
+                                protocol = server.protocol
+                            )
+                        }
                 )
             }
         }
@@ -145,8 +159,13 @@ fun ServersScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp)
+            .verticalScroll(
+                rememberScrollState()
+            )
+            .padding(
+                horizontal = 20.dp,
+                vertical = 20.dp
+            )
     ) {
 
         Card(
@@ -156,10 +175,14 @@ fun ServersScreen(
                 .clickable {
                     showProtocolSheet = true
                 },
+
             shape = RoundedCornerShape(16.dp),
+
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.fullColors.bgServesList
+                containerColor =
+                    MaterialTheme.fullColors.bgServesList
             ),
+
             border = BorderStroke(
                 1.dp,
                 MaterialTheme.fullColors.borderServesList
@@ -173,15 +196,21 @@ fun ServersScreen(
                         horizontal = 16.dp,
                         vertical = 20.dp
                     ),
-                verticalAlignment = Alignment.CenterVertically
+
+                verticalAlignment =
+                    Alignment.CenterVertically
             ) {
 
                 Icon(
                     painter = painterResource(
                         R.drawable.ic_arrow_circle_down
                     ),
-                    contentDescription = "انتخاب پروتکل",
-                    tint = MaterialTheme.fullColors.iconOpenServer
+
+                    contentDescription =
+                        "انتخاب پروتکل",
+
+                    tint =
+                        MaterialTheme.fullColors.iconOpenServer
                 )
 
                 Spacer(
@@ -189,12 +218,21 @@ fun ServersScreen(
                 )
 
                 Text(
-                    text = "پروتکل: ${selectedProtocol?.name ?: "..."}",
-                    color = MaterialTheme.fullColors.whitBlack,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontFamily = FontFamily(
-                        Font(R.font.yekanbakh_medium)
-                    )
+                    text =
+                        "پروتکل: ${
+                            selectedProtocol?.name ?: "..."
+                        }",
+
+                    color =
+                        MaterialTheme.fullColors.whitBlack,
+
+                    style =
+                        MaterialTheme.typography.bodyLarge,
+
+                    fontFamily =
+                        FontFamily(
+                            Font(R.font.yekanbakh_medium)
+                        )
                 )
 
                 Spacer(
@@ -206,11 +244,16 @@ fun ServersScreen(
         if (showProtocolSheet) {
 
             ProtocolBottomSheet(
-                protocols = availableProtocols.map { it.name },
+                protocols =
+                    availableProtocols.map {
+                        it.name
+                    },
 
                 currentProtocol =
                     selectedProtocol?.name
-                        ?: availableProtocols.firstOrNull()?.name
+                        ?: availableProtocols
+                            .firstOrNull()
+                            ?.name
                         ?: "",
 
                 onProtocolSelected = { protocolName ->
@@ -221,7 +264,11 @@ fun ServersScreen(
                         )
 
                     scope.launch {
-                        viewModel.saveSelectedProtocol(protocol)
+
+                        viewModel.saveSelectedProtocol(
+                            protocol
+                        )
+
                         showProtocolSheet = false
                     }
                 },
@@ -236,9 +283,11 @@ fun ServersScreen(
 
             val containsActive =
                 activeServer?.let { active ->
+
                     nationalServer.servers.any {
                         it.id == active.serverid
                     }
+
                 } ?: false
 
             ItemsNationalServer(
@@ -249,21 +298,26 @@ fun ServersScreen(
 
                         ServerItem(
                             id = server.serverid,
+
                             name = server.servername,
 
-                            defaultPing = when (server.protocol) {
-                                ProtocolType.V2RAY ->
-                                    "${server.serversignal} ms"
+                            defaultPing =
+                                when (server.protocol) {
 
-                                ProtocolType.SSH ->
-                                    "..."
+                                    ProtocolType.V2RAY ->
+                                        "${server.serversignal} ms"
 
-                                else ->
-                                    ""
-                            },
+                                    ProtocolType.SSH ->
+                                        "..."
+
+                                    else ->
+                                        ""
+                                },
 
                             ip = server.ip,
+
                             config = server.config,
+
                             protocol = server.protocol
                         )
                     },
@@ -293,14 +347,18 @@ fun ServersScreen(
                     }
                 },
 
-                initiallyExpanded = containsActive,
+                initiallyExpanded =
+                    containsActive,
+
                 viewModel = viewModel
             )
         }
     }
 }
 
-fun getFlagResIdForGroup(groupName: String): Int {
+fun getFlagResIdForGroup(
+    groupName: String
+): Int {
     return World.getFlagOf(
         groupName.lowercase()
     )
@@ -316,7 +374,9 @@ fun ItemsNationalServer(
 ) {
 
     var isExpanded by remember {
-        mutableStateOf(initiallyExpanded)
+        mutableStateOf(
+            initiallyExpanded
+        )
     }
 
     Card(
@@ -325,17 +385,20 @@ fun ItemsNationalServer(
             .fillMaxWidth()
             .wrapContentHeight(),
 
-        shape = RoundedCornerShape(16.dp),
+        shape =
+            RoundedCornerShape(16.dp),
 
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.fullColors.borderServesList
-        ),
+        border =
+            BorderStroke(
+                1.dp,
+                MaterialTheme.fullColors.borderServesList
+            ),
 
-        colors = CardDefaults.cardColors(
-            containerColor =
-                MaterialTheme.fullColors.bgServesList
-        )
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    MaterialTheme.fullColors.bgServesList
+            )
     ) {
 
         Row(
@@ -347,49 +410,62 @@ fun ItemsNationalServer(
                 }
                 .padding(horizontal = 20.dp),
 
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment =
+                Alignment.CenterVertically,
 
             horizontalArrangement =
                 Arrangement.SpaceBetween
         ) {
 
             Card(
-                modifier = Modifier.size(62.dp),
+                modifier =
+                    Modifier.size(62.dp),
 
-                shape = CircleShape,
+                shape =
+                    CircleShape,
 
-                colors = CardDefaults.cardColors(
-                    containerColor =
-                        MaterialTheme.fullColors.bgFlagServesList
-                )
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor =
+                            MaterialTheme.fullColors
+                                .bgFlagServesList
+                    )
             ) {
 
                 Box(
-                    modifier = Modifier.fillMaxSize()
+                    modifier =
+                        Modifier.fillMaxSize()
                 ) {
 
                     Surface(
-                        modifier = Modifier.align(
-                            Alignment.Center
-                        ),
-                        shape = CircleShape
+                        modifier =
+                            Modifier.align(
+                                Alignment.Center
+                            ),
+
+                        shape =
+                            CircleShape
                     ) {
 
                         Image(
-                            painter = painterResource(
-                                nationaltyServer.flag
-                            ),
+                            painter =
+                                painterResource(
+                                    nationaltyServer.flag
+                                ),
 
                             contentDescription =
                                 "FlagServer",
 
-                            modifier = Modifier
-                                .size(34.dp)
-                                .border(
-                                    1.5.dp,
-                                    MaterialTheme.fullColors.whit,
-                                    CircleShape
-                                ),
+                            modifier =
+                                Modifier
+                                    .size(34.dp)
+                                    .border(
+                                        1.5.dp,
+                                        MaterialTheme
+                                            .fullColors
+                                            .whit,
+                                        CircleShape
+                                    ),
 
                             contentScale =
                                 ContentScale.Crop
@@ -399,19 +475,25 @@ fun ItemsNationalServer(
             }
 
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp),
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .padding(
+                            horizontal = 8.dp
+                        ),
 
                 horizontalAlignment =
                     Alignment.Start,
 
                 verticalArrangement =
-                    Arrangement.spacedBy(2.5.dp)
+                    Arrangement.spacedBy(
+                        2.5.dp
+                    )
             ) {
 
                 Text(
-                    text = nationaltyServer.name,
+                    text =
+                        nationaltyServer.name,
 
                     color =
                         MaterialTheme.fullColors.whitBlack,
@@ -431,9 +513,10 @@ fun ItemsNationalServer(
                 ) {
 
                     Icon(
-                        painter = painterResource(
-                            R.drawable.ic_location
-                        ),
+                        painter =
+                            painterResource(
+                                R.drawable.ic_location
+                            ),
 
                         contentDescription =
                             "Location",
@@ -450,10 +533,13 @@ fun ItemsNationalServer(
                             "${nationaltyServer.numServer} Location",
 
                         modifier =
-                            Modifier.padding(start = 2.dp),
+                            Modifier.padding(
+                                start = 2.dp
+                            ),
 
                         color =
-                            MaterialTheme.fullColors.pingServers,
+                            MaterialTheme.fullColors
+                                .pingServers,
 
                         style =
                             MaterialTheme.typography.bodySmall,
@@ -467,28 +553,37 @@ fun ItemsNationalServer(
             }
 
             Icon(
-                painter = painterResource(
-                    if (isExpanded)
-                        R.drawable.ic_arrow_circle_up
-                    else
-                        R.drawable.ic_arrow_circle_down
-                ),
+                painter =
+                    painterResource(
+                        if (isExpanded)
+                            R.drawable.ic_arrow_circle_up
+                        else
+                            R.drawable.ic_arrow_circle_down
+                    ),
 
                 contentDescription =
                     "Expand",
 
                 tint =
-                    MaterialTheme.fullColors.iconOpenServer
+                    MaterialTheme.fullColors
+                        .iconOpenServer
             )
         }
 
         if (isExpanded) {
 
             SubServer(
-                nationaltyServer = nationaltyServer,
-                selectedServer = selectedServer,
-                onServerSelected = onServerSelected,
-                viewModel = viewModel
+                nationaltyServer =
+                    nationaltyServer,
+
+                selectedServer =
+                    selectedServer,
+
+                onServerSelected =
+                    onServerSelected,
+
+                viewModel =
+                    viewModel
             )
         }
     }
@@ -503,12 +598,14 @@ fun SubServer(
 ) {
 
     Divider(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
 
         color =
-            MaterialTheme.fullColors.dividerServers
+            MaterialTheme.fullColors
+                .dividerServers
     )
 
     Column {
@@ -519,10 +616,13 @@ fun SubServer(
                 server = server,
 
                 isSelected =
-                    server.id == selectedServer?.id,
+                    server.id ==
+                        selectedServer?.id,
 
                 onSelect = {
-                    onServerSelected(server)
+                    onServerSelected(
+                        server
+                    )
                 },
 
                 viewModel = viewModel
@@ -540,27 +640,26 @@ fun ItemsServer(
 ) {
 
     /*
-     * XHTTP به صورت ProtocolType جداگانه تعریف نشده است.
-     *
-     * تمام V2RAY ها وارد مسیر Ping می‌شوند.
-     *
-     * خود ServersViewModel کانفیگ را decrypt می‌کند
-     * و تشخیص می‌دهد که کانفیگ XHTTP است یا V2Ray معمولی.
+     * XHTTP is transported as V2Ray/VLESS,
+     * therefore all V2RAY servers enter the
+     * diagnostic Ping path.
      */
     val shouldShowPing =
         server.protocol == ProtocolType.V2RAY ||
-        server.protocol == ProtocolType.SSH
+            server.protocol == ProtocolType.SSH
 
     var currentPing by remember(
         server.id,
         server.protocol,
         server.config
     ) {
+
         mutableStateOf(
-            if (shouldShowPing)
+            if (shouldShowPing) {
                 server.defaultPing
-            else
+            } else {
                 ""
+            }
         )
     }
 
@@ -579,34 +678,45 @@ fun ItemsServer(
         }
 
         /*
-         * برای SSH و V2Ray/XHTTP ابتدا حالت
-         * loading نمایش داده می‌شود.
+         * Show loading state while the diagnostic
+         * check is running.
          */
         currentPing = "..."
 
-        val realPing =
-            viewModel.getRealPing(
-                serverId = server.id,
-                config = server.config,
-                protocol = server.protocol,
-                fallbackIp = server.ip
-            )
-
+        /*
+         * IMPORTANT:
+         *
+         * We intentionally use getPingDebug()
+         * instead of getRealPing().
+         *
+         * This makes the actual failure visible
+         * directly inside the app.
+         */
         currentPing =
-            if (realPing > 0)
-                "${realPing} ms"
-            else
-                "N/A"
+            viewModel.getPingDebug(
+                serverId =
+                    server.id,
+
+                config =
+                    server.config,
+
+                protocol =
+                    server.protocol,
+
+                fallbackIp =
+                    server.ip
+            )
     }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .wrapContentHeight()
-            .padding(horizontal = 20.dp)
-            .clickable {
-                onSelect()
-            },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .padding(horizontal = 20.dp)
+                .clickable {
+                    onSelect()
+                },
 
         verticalAlignment =
             Alignment.CenterVertically,
@@ -616,14 +726,16 @@ fun ItemsServer(
     ) {
 
         Text(
-            text = server.name,
+            text =
+                server.name,
 
             style =
                 MaterialTheme.typography.bodyMedium,
 
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 10.dp),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(end = 10.dp),
 
             maxLines = 1,
 
@@ -631,7 +743,8 @@ fun ItemsServer(
                 TextOverflow.Ellipsis,
 
             color =
-                MaterialTheme.fullColors.whitBlack,
+                MaterialTheme.fullColors
+                    .whitBlack,
 
             fontFamily =
                 FontFamily(
@@ -666,21 +779,30 @@ fun ItemsServer(
                 )
 
                 Text(
-                    text = currentPing,
+                    text =
+                        currentPing,
 
                     modifier =
-                        Modifier.padding(start = 2.dp),
+                        Modifier.padding(
+                            start = 2.dp
+                        ),
 
                     style =
                         MaterialTheme.typography.bodySmall,
 
                     color =
-                        MaterialTheme.fullColors.pingServers,
+                        MaterialTheme.fullColors
+                            .pingServers,
 
                     fontFamily =
                         FontFamily(
                             Font(R.font.opensans_bold)
-                        )
+                        ),
+
+                    maxLines = 1,
+
+                    overflow =
+                        TextOverflow.Ellipsis
                 )
             }
 
@@ -693,23 +815,29 @@ fun ItemsServer(
         }
 
         RadioButton(
-            selected = isSelected,
+            selected =
+                isSelected,
 
-            onClick = onSelect,
+            onClick =
+                onSelect,
 
             colors =
                 RadioButtonColors(
                     selectedColor =
-                        MaterialTheme.fullColors.purple,
+                        MaterialTheme.fullColors
+                            .purple,
 
                     disabledSelectedColor =
-                        MaterialTheme.fullColors.purple,
+                        MaterialTheme.fullColors
+                            .purple,
 
                     unselectedColor =
-                        MaterialTheme.fullColors.unCheckRadioServer,
+                        MaterialTheme.fullColors
+                            .unCheckRadioServer,
 
                     disabledUnselectedColor =
-                        MaterialTheme.fullColors.unCheckRadioServer
+                        MaterialTheme.fullColors
+                            .unCheckRadioServer
                 )
         )
     }
@@ -739,7 +867,8 @@ fun ServerPreview() {
     FullKotlinTheme(true) {
 
         Box(
-            modifier = Modifier.fillMaxSize()
+            modifier =
+                Modifier.fillMaxSize()
         ) {
 
             Image(
@@ -766,12 +895,18 @@ fun ServerPreview() {
                                 Brush.radialGradient(
                                     colors =
                                         listOf(
-                                            MaterialTheme.fullColors.shadowBackground,
+                                            MaterialTheme
+                                                .fullColors
+                                                .shadowBackground,
+
                                             Color.Transparent
                                         ),
 
                                     center =
-                                        Offset(0f, 0f),
+                                        Offset(
+                                            0f,
+                                            0f
+                                        ),
 
                                     radius =
                                         1800f
@@ -781,6 +916,7 @@ fun ServerPreview() {
 
             val servers =
                 listOf(
+
                     NationaltyServer(
                         name = "FRANCE",
                         numServer = 3,
@@ -789,6 +925,7 @@ fun ServerPreview() {
 
                         servers =
                             listOf(
+
                                 ServerItem(
                                     "12",
                                     "Paris",
@@ -817,6 +954,7 @@ fun ServerPreview() {
 
                         servers =
                             listOf(
+
                                 ServerItem(
                                     "1",
                                     "New York",
@@ -908,6 +1046,7 @@ fun ServerPreview() {
 
                         servers =
                             listOf(
+
                                 ServerItem(
                                     "10",
                                     "Amsterdam",
@@ -934,9 +1073,12 @@ fun ServerPreview() {
             }
 
             ServersScreen(
-                navController = rememberNavController(),
+                navController =
+                    rememberNavController(),
+
                 onItemClick = {}
             )
         }
     }
 }
+
