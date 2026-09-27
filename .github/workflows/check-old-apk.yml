@@ -1,0 +1,41 @@
+name: Check TehShop 1.009 Signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download old APK
+        shell: bash
+        run: |
+          curl -fL --retry 3 \
+            -o old.apk \
+            https://fr6shop.ir/TehShop-1.009.apk
+
+          ls -lh old.apk
+          sha256sum old.apk
+
+      - name: Inspect APK signing
+        shell: bash
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+
+          echo "Using: $APKSIGNER"
+          echo
+
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            old.apk
