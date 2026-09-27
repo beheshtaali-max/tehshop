@@ -28,35 +28,53 @@ class ServersViewModel(
     private val serverDataStore: ServerDataStore
 ) : ViewModel() {
 
-    val organizedServers = serverDataStore.organizedServersFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = null
-    )
+    val organizedServers =
+        serverDataStore.organizedServersFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
 
-    val selectedProtocol = serverDataStore.selectedProtocolFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = null
-    )
+    val selectedProtocol =
+        serverDataStore.selectedProtocolFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
 
-    val activeServer = serverDataStore.selectedServerFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = null
-    )
+    val activeServer =
+        serverDataStore.selectedServerFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
 
-    private val pingCache = mutableMapOf<String, Long>()
+    private val pingCache =
+        mutableMapOf<String, Long>()
 
-    suspend fun activateAndSelectServer(server: Server) {
-        val currentList = serverDataStore.serversFlow.first()
+    suspend fun activateAndSelectServer(
+        server: Server
+    ) {
 
-        val updatedList = currentList.map {
-            it.copy(isActive = it.serverid == server.serverid)
-        }
+        val currentList =
+            serverDataStore.serversFlow.first()
 
-        serverDataStore.saveServers(updatedList)
-        serverDataStore.selectServer(server)
+        val updatedList =
+            currentList.map {
+
+                it.copy(
+                    isActive =
+                        it.serverid == server.serverid
+                )
+            }
+
+        serverDataStore.saveServers(
+            updatedList
+        )
+
+        serverDataStore.selectServer(
+            server
+        )
     }
 
     suspend fun getRealPing(
@@ -66,73 +84,103 @@ class ServersViewModel(
         fallbackIp: String = ""
     ): Long {
 
-        val rawConfig = decryptOrRaw(config)
+        val rawConfig =
+            decryptOrRaw(config)
 
-        val xhttp = parseXhttpConfig(
-            rawConfig = rawConfig,
-            fallbackIp = fallbackIp
-        )
+        val normalizedConfig =
+            normalizeConfig(rawConfig)
+
+        val xhttp =
+            parseXhttpConfig(
+                rawConfig = normalizedConfig,
+                fallbackIp = fallbackIp
+            )
 
         val isXhttp =
-            xhttp.host.isNotBlank() &&
+            isXhttpConfig(normalizedConfig) ||
                 (
-                    xhttp.isXhttp ||
-                    rawConfig.contains(
-                        "packet-up",
-                        ignoreCase = true
-                    ) ||
-                    rawConfig.contains(
-                        "packet-up-base64",
-                        ignoreCase = true
+                    xhttp.host.isNotBlank() &&
+                        xhttp.isXhttp
                     )
-                )
 
         val cacheKey =
-            "${protocol.name}:$serverId:${if (isXhttp) "xhttp" else "normal"}"
+            buildString {
+
+                append(protocol.name)
+                append(":")
+                append(serverId)
+                append(":")
+                append(
+                    if (isXhttp) {
+                        "xhttp"
+                    } else {
+                        "normal"
+                    }
+                )
+            }
 
         pingCache[cacheKey]?.let { cached ->
+
             if (cached > 0) {
                 return cached
             }
         }
 
-        val ping = withContext(Dispatchers.IO) {
+        val ping =
+            withContext(Dispatchers.IO) {
 
-            when {
-                isXhttp -> {
-                    getXhttpPing(xhttp)
-                }
+                when {
 
-                protocol == ProtocolType.V2RAY -> {
-                    getV2rayPing(rawConfig)
-                }
+                    isXhttp -> {
 
-                protocol == ProtocolType.SSH -> {
-                    getSshTcpPing(
-                        rawConfig,
-                        fallbackIp
-                    )
-                }
+                        getXhttpPing(
+                            xhttp
+                        )
+                    }
 
-                else -> {
-                    PING_NOT_AVAILABLE
+                    protocol ==
+                        ProtocolType.V2RAY -> {
+
+                        getV2rayPing(
+                            rawConfig
+                        )
+                    }
+
+                    protocol ==
+                        ProtocolType.SSH -> {
+
+                        getSshTcpPing(
+                            rawConfig,
+                            fallbackIp
+                        )
+                    }
+
+                    else -> {
+
+                        PING_NOT_AVAILABLE
+                    }
                 }
             }
-        }
 
         if (ping > 0) {
-            pingCache[cacheKey] = ping
+
+            pingCache[cacheKey] =
+                ping
         }
 
         return ping
     }
 
     /**
-     * XHTTP diagnostic method.
+     * Diagnostic ping used by the UI.
      *
-     * This method is intentionally separate from getRealPing().
-     * It allows the UI to show exactly which connection stage
-     * failed without Android Studio or ADB.
+     * Examples:
+     *
+     * XHTTP 145ms
+     * XHTTP TCP 80ms • TLS 142ms
+     * XHTTP TCP FAILED
+     * XHTTP HOST EMPTY
+     * V2RAY 120ms
      */
     suspend fun getPingDebug(
         serverId: String,
@@ -148,6 +196,11 @@ class ServersViewModel(
                 val rawConfig =
                     decryptOrRaw(config)
 
+                val normalizedConfig =
+                    normalizeConfig(
+                        rawConfig
+                    )
+
                 Log.e(
                     TAG,
                     "PING_DEBUG START " +
@@ -155,93 +208,141 @@ class ServersViewModel(
                         "protocol=$protocol"
                 )
 
-                val xhttp =
-                    parseXhttpConfig(
-                        rawConfig = rawConfig,
-                        fallbackIp = fallbackIp
-                    )
+                Log.e(
+                    TAG,
+                    "PING_DEBUG CONFIG=$normalizedConfig"
+                )
 
-                val isXhttp =
-                    xhttp.host.isNotBlank() &&
-                        (
-                            xhttp.isXhttp ||
-                            rawConfig.contains(
-                                "packet-up",
-                                ignoreCase = true
-                            ) ||
-                            rawConfig.contains(
-                                "packet-up-base64",
-                                ignoreCase = true
-                            )
-                        )
+                val detectedXhttp =
+                    isXhttpConfig(
+                        normalizedConfig
+                    )
 
                 Log.e(
                     TAG,
-                    "PING_DEBUG DETECT " +
-                        "isXhttp=$isXhttp " +
-                        "host=${xhttp.host} " +
-                        "port=${xhttp.port} " +
-                        "path=${xhttp.path} " +
-                        "tls=${xhttp.tls} " +
-                        "sni=${xhttp.sni}"
+                    "PING_DEBUG XHTTP_DETECTED=$detectedXhttp"
                 )
 
-                if (!isXhttp) {
+                /*
+                 * Normal V2Ray
+                 */
+                if (!detectedXhttp) {
+
+                    if (
+                        protocol ==
+                            ProtocolType.V2RAY
+                    ) {
+
+                        val ping =
+                            getV2rayPing(
+                                rawConfig
+                            )
+
+                        return@withContext if (
+                            ping > 0
+                        ) {
+
+                            "V2RAY ${ping}ms"
+
+                        } else {
+
+                            "V2RAY FAILED"
+                        }
+                    }
+
                     return@withContext "NOT XHTTP"
                 }
 
-                if (xhttp.host.isBlank()) {
-                    return@withContext "HOST EMPTY"
+                /*
+                 * Parse XHTTP endpoint.
+                 */
+                val endpoint =
+                    parseXhttpConfig(
+                        rawConfig =
+                            normalizedConfig,
+                        fallbackIp =
+                            fallbackIp
+                    )
+
+                Log.e(
+                    TAG,
+                    "PING_DEBUG ENDPOINT " +
+                        "host=${endpoint.host} " +
+                        "port=${endpoint.port} " +
+                        "path=${endpoint.path} " +
+                        "tls=${endpoint.tls} " +
+                        "sni=${endpoint.sni} " +
+                        "alpn=${endpoint.alpn}"
+                )
+
+                if (
+                    endpoint.host.isBlank()
+                ) {
+
+                    return@withContext (
+                        "XHTTP HOST EMPTY"
+                    )
                 }
 
                 val start =
                     System.nanoTime()
 
-                var socket: Socket? = null
+                var socket: Socket? =
+                    null
 
                 try {
 
                     /*
+                     * ========================
                      * TCP
+                     * ========================
                      */
+
                     socket =
                         Socket()
 
                     socket.connect(
                         InetSocketAddress(
-                            xhttp.host,
-                            xhttp.port
+                            endpoint.host,
+                            endpoint.port
                         ),
                         XHTTP_CONNECT_TIMEOUT_MS
                     )
 
                     val tcpMs =
-                        (
-                            (System.nanoTime() - start) /
-                                1_000_000L
-                            ).coerceAtLeast(1L)
+                        elapsedMs(
+                            start
+                        )
 
                     Log.e(
                         TAG,
                         "PING_DEBUG TCP_OK " +
-                            "${xhttp.host}:${xhttp.port} " +
                             "${tcpMs}ms"
                     )
 
-                    if (!xhttp.tls) {
+                    /*
+                     * ========================
+                     * NON TLS
+                     * ========================
+                     */
+
+                    if (!endpoint.tls) {
 
                         return@withContext (
-                            "TCP OK ${tcpMs}ms"
+                            "XHTTP TCP ${tcpMs}ms"
                         )
                     }
 
                     /*
+                     * ========================
                      * TLS
+                     * ========================
                      */
+
                     val sslSocket =
                         createTlsSocket(
                             socket,
-                            xhttp
+                            endpoint
                         )
 
                     socket =
@@ -250,11 +351,51 @@ class ServersViewModel(
                     sslSocket.soTimeout =
                         XHTTP_READ_TIMEOUT_MS
 
+                    /*
+                     * ALPN
+                     */
+                    try {
+
+                        val protocols =
+                            endpoint.alpn
+                                .split(",")
+                                .map {
+                                    it.trim()
+                                }
+                                .filter {
+                                    it.isNotBlank()
+                                }
+
+                        if (
+                            protocols.isNotEmpty()
+                        ) {
+
+                            val parameters =
+                                sslSocket.sslParameters
+
+                            parameters.applicationProtocols =
+                                protocols.toTypedArray()
+
+                            sslSocket.sslParameters =
+                                parameters
+                        }
+
+                    } catch (t: Throwable) {
+
+                        Log.w(
+                            TAG,
+                            "ALPN setup failed",
+                            t
+                        )
+                    }
+
                     try {
 
                         sslSocket.startHandshake()
 
-                    } catch (e: Throwable) {
+                    } catch (
+                        e: Throwable
+                    ) {
 
                         Log.e(
                             TAG,
@@ -263,45 +404,59 @@ class ServersViewModel(
                         )
 
                         return@withContext (
-                            "TLS FAILED: " +
-                                e.javaClass.simpleName
+                            "XHTTP TCP ${tcpMs}ms • TLS FAILED"
                         )
                     }
 
                     val tlsMs =
-                        (
-                            (System.nanoTime() - start) /
-                                1_000_000L
-                            ).coerceAtLeast(1L)
+                        elapsedMs(
+                            start
+                        )
 
                     Log.e(
                         TAG,
-                        "PING_DEBUG TLS_OK ${tlsMs}ms"
+                        "PING_DEBUG TLS_OK " +
+                            "${tlsMs}ms"
                     )
 
                     /*
-                     * HTTP request
+                     * ========================
+                     * HTTP diagnostic
+                     * ========================
+                     *
+                     * This is intentionally a
+                     * lightweight HTTP request.
+                     *
+                     * It checks whether the TLS
+                     * endpoint answers.
+                     *
+                     * It is NOT pretending to be
+                     * a full XHTTP packet-up
+                     * implementation.
                      */
+
                     val request =
                         buildHttpRequest(
-                            xhttp
+                            endpoint
                         )
 
                     try {
 
-                        sslSocket.getOutputStream()
-                            .use { output ->
+                        val output =
+                            sslSocket
+                                .getOutputStream()
 
-                                output.write(
-                                    request.toByteArray(
-                                        Charsets.UTF_8
-                                    )
-                                )
+                        output.write(
+                            request.toByteArray(
+                                Charsets.UTF_8
+                            )
+                        )
 
-                                output.flush()
-                            }
+                        output.flush()
 
-                    } catch (e: Throwable) {
+                    } catch (
+                        e: Throwable
+                    ) {
 
                         Log.e(
                             TAG,
@@ -310,20 +465,20 @@ class ServersViewModel(
                         )
 
                         return@withContext (
-                            "HTTP SEND FAILED: " +
-                                e.javaClass.simpleName
+                            "XHTTP TCP ${tcpMs}ms • TLS ${tlsMs}ms"
                         )
                     }
 
                     /*
-                     * HTTP response
+                     * Read only the first HTTP line.
                      */
                     try {
 
                         val reader =
                             BufferedReader(
                                 InputStreamReader(
-                                    sslSocket.getInputStream(),
+                                    sslSocket
+                                        .getInputStream(),
                                     Charsets.ISO_8859_1
                                 )
                             )
@@ -336,38 +491,31 @@ class ServersViewModel(
                             "PING_DEBUG HTTP_RESPONSE=$response"
                         )
 
+                        val totalMs =
+                            elapsedMs(
+                                start
+                            )
+
                         if (
                             response != null &&
-                            response.startsWith(
-                                "HTTP/",
-                                ignoreCase = true
-                            )
+                                response.startsWith(
+                                    "HTTP/",
+                                    ignoreCase = true
+                                )
                         ) {
 
-                            val totalMs =
-                                (
-                                    (System.nanoTime() - start) /
-                                        1_000_000L
-                                    ).coerceAtLeast(1L)
-
-                            Log.e(
-                                TAG,
-                                "PING_DEBUG SUCCESS " +
-                                    "${totalMs}ms"
-                            )
-
                             return@withContext (
-                                "OK ${totalMs}ms"
-                            )
-
-                        } else {
-
-                            return@withContext (
-                                "NO HTTP RESPONSE"
+                                "XHTTP ${totalMs}ms"
                             )
                         }
 
-                    } catch (e: Throwable) {
+                        return@withContext (
+                            "XHTTP TCP ${tcpMs}ms • TLS ${tlsMs}ms"
+                        )
+
+                    } catch (
+                        e: Throwable
+                    ) {
 
                         Log.e(
                             TAG,
@@ -376,12 +524,13 @@ class ServersViewModel(
                         )
 
                         return@withContext (
-                            "HTTP READ FAILED: " +
-                                e.javaClass.simpleName
+                            "XHTTP TCP ${tcpMs}ms • TLS ${tlsMs}ms"
                         )
                     }
 
-                } catch (e: Throwable) {
+                } catch (
+                    e: Throwable
+                ) {
 
                     Log.e(
                         TAG,
@@ -390,8 +539,7 @@ class ServersViewModel(
                     )
 
                     return@withContext (
-                        "TCP FAILED: " +
-                            e.javaClass.simpleName
+                        "XHTTP TCP FAILED"
                     )
 
                 } finally {
@@ -402,7 +550,9 @@ class ServersViewModel(
                     }
                 }
 
-            } catch (e: Throwable) {
+            } catch (
+                e: Throwable
+            ) {
 
                 Log.e(
                     TAG,
@@ -411,8 +561,7 @@ class ServersViewModel(
                 )
 
                 return@withContext (
-                    "ERROR: " +
-                        e.javaClass.simpleName
+                    "XHTTP ERROR"
                 )
             }
         }
@@ -421,7 +570,10 @@ class ServersViewModel(
     suspend fun saveSelectedProtocol(
         protocol: ProtocolType
     ) {
-        serverDataStore.saveSelectedProtocol(protocol)
+
+        serverDataStore.saveSelectedProtocol(
+            protocol
+        )
     }
 
     private fun getV2rayPing(
@@ -430,11 +582,16 @@ class ServersViewModel(
 
         return try {
 
-            V2rayController.getV2rayServerDelay(
-                Crypto.decryptThis(config)
-            )
+            V2rayController
+                .getV2rayServerDelay(
+                    Crypto.decryptThis(
+                        config
+                    )
+                )
 
-        } catch (t: Throwable) {
+        } catch (
+            t: Throwable
+        ) {
 
             Log.e(
                 TAG,
@@ -446,26 +603,22 @@ class ServersViewModel(
         }
     }
 
-    /**
-     * XHTTP latency:
-     *
-     * 1. TCP connect
-     * 2. TLS handshake
-     * 3. HTTP request
-     * 4. HTTP response
-     */
     private fun getXhttpPing(
         endpoint: XhttpEndpoint
     ): Long {
 
-        if (endpoint.host.isBlank()) {
+        if (
+            endpoint.host.isBlank()
+        ) {
+
             return PING_NOT_AVAILABLE
         }
 
         val start =
             System.nanoTime()
 
-        var socket: Socket? = null
+        var socket: Socket? =
+            null
 
         try {
 
@@ -483,48 +636,11 @@ class ServersViewModel(
                 XHTTP_CONNECT_TIMEOUT_MS
             )
 
-            val tcpConnectedAt =
-                System.nanoTime()
-
-            Log.d(
-                TAG,
-                "XHTTP TCP connected " +
-                    "${endpoint.host}:${endpoint.port} " +
-                    "time=${elapsedMs(start)}ms"
-            )
-
             if (!endpoint.tls) {
 
-                val request =
-                    buildHttpRequest(
-                        endpoint
-                    )
-
-                tcpSocket.soTimeout =
-                    XHTTP_READ_TIMEOUT_MS
-
-                tcpSocket.getOutputStream()
-                    .use { output ->
-
-                        output.write(
-                            request.toByteArray(
-                                Charsets.UTF_8
-                            )
-                        )
-
-                        output.flush()
-                    }
-
-                val responseTime =
-                    waitForHttpResponse(
-                        tcpSocket
-                    )
-
-                return if (responseTime > 0) {
-                    responseTime
-                } else {
-                    elapsedMs(start)
-                }
+                return elapsedMs(
+                    start
+                )
             }
 
             val sslSocket =
@@ -539,75 +655,53 @@ class ServersViewModel(
             sslSocket.soTimeout =
                 XHTTP_READ_TIMEOUT_MS
 
+            /*
+             * ALPN
+             */
+            try {
+
+                val protocols =
+                    endpoint.alpn
+                        .split(",")
+                        .map {
+                            it.trim()
+                        }
+                        .filter {
+                            it.isNotBlank()
+                        }
+
+                if (
+                    protocols.isNotEmpty()
+                ) {
+
+                    val parameters =
+                        sslSocket.sslParameters
+
+                    parameters.applicationProtocols =
+                        protocols.toTypedArray()
+
+                    sslSocket.sslParameters =
+                        parameters
+                }
+
+            } catch (_: Throwable) {
+            }
+
             sslSocket.startHandshake()
 
-            val tlsFinishedAt =
-                System.nanoTime()
-
-            Log.d(
-                TAG,
-                "XHTTP TLS handshake completed " +
-                    "host=${endpoint.host} " +
-                    "tls=${elapsedMs(start)}ms"
+            return elapsedMs(
+                start
             )
 
-            val request =
-                buildHttpRequest(
-                    endpoint
-                )
-
-            sslSocket.getOutputStream()
-                .use { output ->
-
-                    output.write(
-                        request.toByteArray(
-                            Charsets.UTF_8
-                        )
-                    )
-
-                    output.flush()
-                }
-
-            val responseTime =
-                waitForHttpResponse(
-                    sslSocket
-                )
-
-            val total =
-                if (responseTime > 0) {
-
-                    responseTime
-
-                } else {
-
-                    (
-                        (System.nanoTime() - start) /
-                            1_000_000L
-                        ).coerceAtLeast(1L)
-                }
-
-            Log.d(
-                TAG,
-                "XHTTP result " +
-                    "tcp=${nanosToMs(
-                        tcpConnectedAt - start
-                    )}ms " +
-                    "tls=${nanosToMs(
-                        tlsFinishedAt - start
-                    )}ms " +
-                    "total=${total}ms"
-            )
-
-            return total
-
-        } catch (t: Throwable) {
+        } catch (
+            t: Throwable
+        ) {
 
             Log.e(
                 TAG,
                 "XHTTP ping failed " +
                     "host=${endpoint.host} " +
-                    "port=${endpoint.port} " +
-                    "path=${endpoint.path}",
+                    "port=${endpoint.port}",
                 t
             )
 
@@ -628,7 +722,9 @@ class ServersViewModel(
     ): SSLSocket {
 
         val context =
-            SSLContext.getInstance("TLS")
+            SSLContext.getInstance(
+                "TLS"
+            )
 
         context.init(
             null,
@@ -637,7 +733,8 @@ class ServersViewModel(
         )
 
         val factory =
-            context.socketFactory as SSLSocketFactory
+            context.socketFactory
+                as SSLSocketFactory
 
         return factory.createSocket(
             tcpSocket,
@@ -659,7 +756,10 @@ class ServersViewModel(
                     "/"
                 }
                 .let {
-                    if (it.startsWith("/")) {
+
+                    if (
+                        it.startsWith("/")
+                    ) {
                         it
                     } else {
                         "/$it"
@@ -675,72 +775,29 @@ class ServersViewModel(
             append("Host: ")
             append(endpoint.host)
 
-            if (endpoint.port != 443) {
+            if (
+                endpoint.port != 443
+            ) {
+
                 append(":")
                 append(endpoint.port)
             }
 
             append("\r\n")
 
-            append("User-Agent: Mozilla/5.0\r\n")
-            append("Accept: */*\r\n")
-            append("Connection: close\r\n")
+            append(
+                "User-Agent: Mozilla/5.0\r\n"
+            )
+
+            append(
+                "Accept: */*\r\n"
+            )
+
+            append(
+                "Connection: close\r\n"
+            )
+
             append("\r\n")
-        }
-    }
-
-    private fun waitForHttpResponse(
-        socket: Socket
-    ): Long {
-
-        val start =
-            System.nanoTime()
-
-        return try {
-
-            val reader =
-                BufferedReader(
-                    InputStreamReader(
-                        socket.getInputStream(),
-                        Charsets.ISO_8859_1
-                    )
-                )
-
-            val firstLine =
-                reader.readLine()
-
-            val elapsed =
-                (
-                    (System.nanoTime() - start) /
-                        1_000_000L
-                    ).coerceAtLeast(1L)
-
-            Log.d(
-                TAG,
-                "XHTTP HTTP response=$firstLine"
-            )
-
-            if (
-                firstLine != null &&
-                firstLine.startsWith(
-                    "HTTP/",
-                    ignoreCase = true
-                )
-            ) {
-                elapsed
-            } else {
-                PING_NOT_AVAILABLE
-            }
-
-        } catch (t: Throwable) {
-
-            Log.e(
-                TAG,
-                "XHTTP response read failed",
-                t
-            )
-
-            PING_NOT_AVAILABLE
         }
     }
 
@@ -750,14 +807,16 @@ class ServersViewModel(
     ): XhttpEndpoint {
 
         val value =
-            rawConfig.trim()
+            normalizeConfig(
+                rawConfig
+            )
 
         if (
             value.isBlank() ||
-            value.equals(
-                "N/A",
-                ignoreCase = true
-            )
+                value.equals(
+                    "N/A",
+                    ignoreCase = true
+                )
         ) {
 
             return parseFallbackEndpoint(
@@ -765,35 +824,74 @@ class ServersViewModel(
             )
         }
 
-        val decoded =
-            decodeUrlSafely(value)
-
-        val isVlessOrVmess =
-            value.startsWith(
+        /*
+         * Find VLESS/VMess anywhere in the
+         * config instead of requiring it at
+         * position zero.
+         */
+        val vlessIndex =
+            value.indexOf(
                 "vless://",
                 ignoreCase = true
-            ) ||
-                value.startsWith(
-                    "vmess://",
-                    ignoreCase = true
-                )
+            )
 
-        if (isVlessOrVmess) {
+        val vmessIndex =
+            value.indexOf(
+                "vmess://",
+                ignoreCase = true
+            )
+
+        val protocolIndex =
+            listOf(
+                vlessIndex,
+                vmessIndex
+            )
+                .filter {
+                    it >= 0
+                }
+                .minOrNull()
+
+        if (
+            protocolIndex != null
+        ) {
 
             try {
 
+                var uriValue =
+                    value.substring(
+                        protocolIndex
+                    )
+
+                /*
+                 * Remove possible JSON/string
+                 * delimiters after the URI.
+                 */
+                uriValue =
+                    uriValue
+                        .substringBefore("\"")
+                        .substringBefore("'")
+                        .substringBefore("}")
+                        .substringBefore("\n")
+                        .trim()
+
                 val uri =
-                    URI(value)
+                    URI(
+                        uriValue
+                    )
 
                 val host =
                     uri.host
                         .orEmpty()
                         .trim()
 
-                if (host.isNotBlank()) {
+                if (
+                    host.isNotBlank()
+                ) {
 
                     val port =
-                        if (uri.port > 0) {
+                        if (
+                            uri.port > 0
+                        ) {
                             uri.port
                         } else {
                             DEFAULT_XHTTP_PORT
@@ -801,11 +899,13 @@ class ServersViewModel(
 
                     val params =
                         parseQuery(
-                            uri.rawQuery.orEmpty()
+                            uri.rawQuery
+                                .orEmpty()
                         )
 
                     val decodedParams =
-                        params.mapValues { (_, v) ->
+                        params.mapValues {
+                            (_, v) ->
                             decodeValue(v)
                         }
 
@@ -818,21 +918,30 @@ class ServersViewModel(
 
                     val security =
                         decodedParams["security"]
-                            ?.lowercase(Locale.US)
+                            ?.lowercase(
+                                Locale.US
+                            )
                             ?: ""
 
                     val mode =
                         decodedParams["mode"]
-                            ?.lowercase(Locale.US)
+                            ?.lowercase(
+                                Locale.US
+                            )
                             ?: ""
 
                     val type =
                         decodedParams["type"]
-                            ?.lowercase(Locale.US)
+                            ?.lowercase(
+                                Locale.US
+                            )
                             ?: ""
 
                     val alpn =
                         decodedParams["alpn"]
+                            ?.let {
+                                decodeValue(it)
+                            }
                             .orEmpty()
 
                     val sni =
@@ -844,9 +953,22 @@ class ServersViewModel(
 
                     val isXhttp =
                         type == "xhttp" ||
-                            mode.contains("packet-up") ||
-                            decoded.contains(
+                            mode.contains(
+                                "packet-up"
+                            ) ||
+                            mode.contains(
+                                "stream-up"
+                            ) ||
+                            value.contains(
                                 "packet-up",
+                                ignoreCase = true
+                            ) ||
+                            value.contains(
+                                "packet-up-base64",
+                                ignoreCase = true
+                            ) ||
+                            value.contains(
+                                "/api/v1/sync",
                                 ignoreCase = true
                             )
 
@@ -856,19 +978,6 @@ class ServersViewModel(
                             port == 443 ||
                             port == 8443 ||
                             port == 2096
-
-                    Log.d(
-                        TAG,
-                        "Parsed XHTTP " +
-                            "host=$host " +
-                            "port=$port " +
-                            "path=$path " +
-                            "mode=$mode " +
-                            "security=$security " +
-                            "sni=$sni " +
-                            "alpn=$alpn " +
-                            "isXhttp=$isXhttp"
-                    )
 
                     return XhttpEndpoint(
                         host = host,
@@ -881,7 +990,9 @@ class ServersViewModel(
                     )
                 }
 
-            } catch (t: Throwable) {
+            } catch (
+                t: Throwable
+            ) {
 
                 Log.w(
                     TAG,
@@ -891,14 +1002,18 @@ class ServersViewModel(
             }
         }
 
+        /*
+         * Generic @host:port parser.
+         */
         try {
 
             val atIndex =
-                value.lastIndexOf('@')
+                value.lastIndexOf("@")
 
             if (
                 atIndex >= 0 &&
-                atIndex + 1 < value.length
+                    atIndex + 1 <
+                    value.length
             ) {
 
                 val authorityAndQuery =
@@ -908,8 +1023,9 @@ class ServersViewModel(
 
                 val authority =
                     authorityAndQuery
-                        .substringBefore('?')
-                        .substringBefore('#')
+                        .substringBefore("?")
+                        .substringBefore("#")
+                        .substringBefore("\"")
                         .trim()
 
                 val basic =
@@ -918,17 +1034,21 @@ class ServersViewModel(
                         DEFAULT_XHTTP_PORT
                     )
 
-                if (basic.host.isNotBlank()) {
+                if (
+                    basic.host.isNotBlank()
+                ) {
 
                     val query =
                         authorityAndQuery
                             .substringAfter(
-                                '?',
+                                "?",
                                 ""
                             )
 
                     val params =
-                        parseQuery(query)
+                        parseQuery(
+                            query
+                        )
 
                     val path =
                         params["path"]
@@ -944,7 +1064,9 @@ class ServersViewModel(
                         params["security"]
                             ?.let {
                                 decodeValue(it)
-                                    .lowercase(Locale.US)
+                                    .lowercase(
+                                        Locale.US
+                                    )
                             }
                             ?: ""
 
@@ -952,7 +1074,9 @@ class ServersViewModel(
                         params["mode"]
                             ?.let {
                                 decodeValue(it)
-                                    .lowercase(Locale.US)
+                                    .lowercase(
+                                        Locale.US
+                                    )
                             }
                             ?: ""
 
@@ -960,7 +1084,9 @@ class ServersViewModel(
                         params["type"]
                             ?.let {
                                 decodeValue(it)
-                                    .lowercase(Locale.US)
+                                    .lowercase(
+                                        Locale.US
+                                    )
                             }
                             ?: ""
 
@@ -983,9 +1109,18 @@ class ServersViewModel(
 
                     val isXhttp =
                         type == "xhttp" ||
-                            mode.contains("packet-up") ||
+                            mode.contains(
+                                "packet-up"
+                            ) ||
+                            mode.contains(
+                                "stream-up"
+                            ) ||
                             value.contains(
                                 "packet-up",
+                                ignoreCase = true
+                            ) ||
+                            value.contains(
+                                "/api/v1/sync",
                                 ignoreCase = true
                             )
 
@@ -1008,7 +1143,9 @@ class ServersViewModel(
                 }
             }
 
-        } catch (t: Throwable) {
+        } catch (
+            t: Throwable
+        ) {
 
             Log.w(
                 TAG,
@@ -1026,18 +1163,22 @@ class ServersViewModel(
         query: String
     ): Map<String, String> {
 
-        if (query.isBlank()) {
+        if (
+            query.isBlank()
+        ) {
             return emptyMap()
         }
 
         return query
-            .split('&')
+            .split("&")
             .mapNotNull { item ->
 
                 val index =
-                    item.indexOf('=')
+                    item.indexOf("=")
 
-                if (index <= 0) {
+                if (
+                    index <= 0
+                ) {
                     null
                 } else {
 
@@ -1069,33 +1210,191 @@ class ServersViewModel(
                 "UTF-8"
             )
 
-        }.getOrDefault(value)
+        }.getOrDefault(
+            value
+        )
     }
 
-    private fun decodeUrlSafely(
-        value: String
+    private fun normalizeConfig(
+        input: String
     ): String {
 
-        return runCatching {
+        var value =
+            input.trim()
 
+        /*
+         * Decode nested URL encoding.
+         */
+        repeat(3) {
+
+            val decoded =
+                runCatching {
+
+                    URLDecoder.decode(
+                        value,
+                        "UTF-8"
+                    )
+
+                }.getOrNull()
+
+            if (
+                decoded.isNullOrBlank() ||
+                    decoded == value
+            ) {
+
+                return@repeat
+            }
+
+            value =
+                decoded
+        }
+
+        /*
+         * Common escaped JSON characters.
+         */
+        value =
             value
                 .replace(
-                    "%3D",
-                    "=",
-                    ignoreCase = true
+                    "\\/",
+                    "/"
                 )
                 .replace(
-                    "%26",
+                    "\\\"",
+                    "\""
+                )
+                .replace(
+                    "\\u0026",
                     "&",
                     ignoreCase = true
                 )
                 .replace(
-                    "%2F",
-                    "/",
+                    "\\u003d",
+                    "=",
                     ignoreCase = true
                 )
 
-        }.getOrDefault(value)
+        return value
+    }
+
+    private fun isXhttpConfig(
+        config: String
+    ): Boolean {
+
+        val value =
+            normalizeConfig(
+                config
+            ).lowercase(
+                Locale.US
+            )
+
+        /*
+         * Explicit XHTTP type.
+         */
+        if (
+            value.contains(
+                "type=xhttp"
+            ) ||
+            value.contains(
+                "\"type\":\"xhttp\""
+            ) ||
+            value.contains(
+                "\"type\": \"xhttp\""
+            )
+        ) {
+
+            return true
+        }
+
+        /*
+         * XHTTP packet-up modes.
+         */
+        if (
+            value.contains(
+                "mode=packet-up"
+            ) ||
+            value.contains(
+                "mode=packet-up-base64"
+            ) ||
+            value.contains(
+                "mode=stream-up"
+            ) ||
+            value.contains(
+                "\"mode\":\"packet-up\""
+            ) ||
+            value.contains(
+                "\"mode\": \"packet-up\""
+            ) ||
+            value.contains(
+                "\"mode\":\"packet-up-base64\""
+            ) ||
+            value.contains(
+                "\"mode\": \"packet-up-base64\""
+            )
+        ) {
+
+            return true
+        }
+
+        /*
+         * Additional XHTTP identifiers.
+         */
+        if (
+            value.contains(
+                "packet-up"
+            ) ||
+            value.contains(
+                "packet_up"
+            )
+        ) {
+
+            return true
+        }
+
+        /*
+         * Typical XHTTP sync endpoint.
+         */
+        if (
+            value.contains(
+                "/api/v1/sync"
+            ) &&
+            (
+                value.contains(
+                    "vless://"
+                ) ||
+                    value.contains(
+                        "vmess://"
+                    ) ||
+                    value.contains(
+                        "\"protocol\""
+                    ) ||
+                    value.contains(
+                        "\"streamsettings\""
+                    )
+                )
+        ) {
+
+            return true
+        }
+
+        /*
+         * Decode once more in case the config
+         * still contains encoded separators.
+         */
+        val decoded =
+            runCatching {
+
+                URLDecoder.decode(
+                    value,
+                    "UTF-8"
+                )
+
+            }.getOrDefault(
+                value
+            )
+
+        return decoded.contains(
+            "packet-up"
+        )
     }
 
     private fun parseFallbackEndpoint(
@@ -1105,7 +1404,9 @@ class ServersViewModel(
         val value =
             fallbackIp.trim()
 
-        if (value.isBlank()) {
+        if (
+            value.isBlank()
+        ) {
 
             return XhttpEndpoint(
                 host = "",
@@ -1146,7 +1447,9 @@ class ServersViewModel(
         val input =
             value.trim()
 
-        if (input.isBlank()) {
+        if (
+            input.isBlank()
+        ) {
 
             return BasicEndpoint(
                 "",
@@ -1154,12 +1457,16 @@ class ServersViewModel(
             )
         }
 
-        if (input.startsWith("[")) {
+        if (
+            input.startsWith("[")
+        ) {
 
             val end =
-                input.indexOf(']')
+                input.indexOf("]")
 
-            if (end > 0) {
+            if (
+                end > 0
+            ) {
 
                 val host =
                     input.substring(
@@ -1168,9 +1475,10 @@ class ServersViewModel(
                     ).trim()
 
                 val port =
-                    input.substring(
-                        end + 1
-                    )
+                    input
+                        .substring(
+                            end + 1
+                        )
                         .removePrefix(":")
                         .trim()
                         .toIntOrNull()
@@ -1187,11 +1495,12 @@ class ServersViewModel(
         }
 
         val separator =
-            input.lastIndexOf(':')
+            input.lastIndexOf(":")
 
         if (
             separator > 0 &&
-            input.indexOf(':') == separator
+                input.indexOf(":") ==
+                separator
         ) {
 
             val host =
@@ -1229,17 +1538,21 @@ class ServersViewModel(
     ): Long {
 
         val rawAddress =
-            decryptOrRaw(config)
-                .ifBlank {
-                    fallbackIp
-                }
+            decryptOrRaw(
+                config
+            ).ifBlank {
+                fallbackIp
+            }
 
         val endpoint =
             parseSshEndpoint(
                 rawAddress
             )
 
-        if (endpoint.host.isBlank()) {
+        if (
+            endpoint.host.isBlank()
+        ) {
+
             return PING_NOT_AVAILABLE
         }
 
@@ -1259,12 +1572,13 @@ class ServersViewModel(
                 )
             }
 
-            (
-                (System.nanoTime() - start) /
-                    1_000_000L
-                ).coerceAtLeast(1L)
+            elapsedMs(
+                start
+            )
 
-        } catch (t: Throwable) {
+        } catch (
+            t: Throwable
+        ) {
 
             Log.e(
                 TAG,
@@ -1287,10 +1601,10 @@ class ServersViewModel(
 
         if (
             value.isEmpty() ||
-            value.equals(
-                "N/A",
-                ignoreCase = true
-            )
+                value.equals(
+                    "N/A",
+                    ignoreCase = true
+                )
         ) {
 
             return SshEndpoint(
@@ -1309,7 +1623,9 @@ class ServersViewModel(
             ) {
 
                 val uri =
-                    URI(value)
+                    URI(
+                        value
+                    )
 
                 val host =
                     uri.host
@@ -1317,7 +1633,9 @@ class ServersViewModel(
                         .trim()
 
                 val port =
-                    if (uri.port > 0) {
+                    if (
+                        uri.port > 0
+                    ) {
                         uri.port
                     } else {
                         DEFAULT_SSH_PORT
@@ -1334,16 +1652,24 @@ class ServersViewModel(
 
         val address =
             value
-                .removePrefix("SSH://")
-                .removePrefix("ssh://")
+                .removePrefix(
+                    "SSH://"
+                )
+                .removePrefix(
+                    "ssh://"
+                )
                 .trim()
 
-        if (address.startsWith("[")) {
+        if (
+            address.startsWith("[")
+        ) {
 
             val end =
-                address.indexOf(']')
+                address.indexOf("]")
 
-            if (end > 0) {
+            if (
+                end > 0
+            ) {
 
                 val host =
                     address.substring(
@@ -1353,7 +1679,9 @@ class ServersViewModel(
 
                 val port =
                     address
-                        .substring(end + 1)
+                        .substring(
+                            end + 1
+                        )
                         .removePrefix(":")
                         .trim()
                         .toIntOrNull()
@@ -1370,11 +1698,12 @@ class ServersViewModel(
         }
 
         val separator =
-            address.lastIndexOf(':')
+            address.lastIndexOf(":")
 
         return if (
             separator > 0 &&
-            address.indexOf(':') == separator
+                address.indexOf(":") ==
+                separator
         ) {
 
             val host =
@@ -1414,7 +1743,9 @@ class ServersViewModel(
 
         return try {
 
-            Crypto.decryptThis(value)
+            Crypto.decryptThis(
+                value
+            )
 
         } catch (_: Throwable) {
 
@@ -1428,18 +1759,10 @@ class ServersViewModel(
     ): Long {
 
         return (
-            (System.nanoTime() - start) /
-                1_000_000L
-            ).coerceAtLeast(1L)
-    }
-
-    private fun nanosToMs(
-        nanos: Long
-    ): Long {
-
-        return (
-            nanos /
-                1_000_000L
+            (
+                System.nanoTime() -
+                    start
+            ) / 1_000_000L
             ).coerceAtLeast(1L)
     }
 
