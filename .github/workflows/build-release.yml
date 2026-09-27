@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -26,35 +27,63 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           VERSION="26.9.8"
           BASE="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}"
+
           mkdir -p v2ray/src/main/assets/xray/arm64-v8a
+
           ABI="arm64-v8a"
           ARCHIVE="Xray-android-${ABI}.zip"
-          curl -fL --retry 3 -o "/tmp/${ARCHIVE}" "${BASE}/${ARCHIVE}"
+
+          curl -fL --retry 3 \
+            -o "/tmp/${ARCHIVE}" \
+            "${BASE}/${ARCHIVE}"
+
           rm -rf "/tmp/xray-${ABI}"
           mkdir -p "/tmp/xray-${ABI}"
+
           unzip -oq "/tmp/${ARCHIVE}" -d "/tmp/xray-${ABI}"
+
           BIN="$(find "/tmp/xray-${ABI}" -type f -name xray -perm -u+x | head -n1)"
+
           if [ -z "${BIN}" ]; then
             BIN="$(find "/tmp/xray-${ABI}" -type f -name xray | head -n1)"
           fi
+
           test -n "${BIN}"
+
           cp "${BIN}" "v2ray/src/main/assets/xray/${ABI}/xray"
+
           chmod 755 "v2ray/src/main/assets/xray/${ABI}/xray"
+
           file v2ray/src/main/assets/xray/arm64-v8a/xray
 
+      - name: Fix Gradle permission
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --version
+
       - name: Build release APK
-        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Rename APK
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p release
+
           APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n1)"
+
           test -n "${APK}"
+
           cp "${APK}" "release/TehVPN-XHTTP-1.010-release.apk"
+
           sha256sum "release/TehVPN-XHTTP-1.010-release.apk" > release/SHA256SUMS.txt
 
       - name: Upload workflow artifact
