@@ -12,20 +12,43 @@ jobs:
 
     steps:
       - name: Download old APK
+        shell: bash
         run: |
-          curl -fL --retry 3 -o old.apk "https://fr6shop.ir/TehShop-1.009.apk"
+          curl -fL --retry 3 \
+            -o old.apk \
+            "https://fr6shop.ir/TehShop-1.009.apk"
+
           ls -lh old.apk
           sha256sum old.apk
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Find apksigner
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-      - name: Install build tools
-        run: sdkmanager "build-tools;35.0.0"
+          find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name "apksigner" \
+            -print
 
       - name: Inspect APK signing
+        shell: bash
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify \
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name "apksigner" \
+            | sort -V \
+            | tail -n 1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found"
+            exit 1
+          fi
+
+          echo "Using: $APKSIGNER"
+
+          "$APKSIGNER" verify \
             --verbose \
             --print-certs \
             old.apk
