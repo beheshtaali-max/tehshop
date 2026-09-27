@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -15,49 +15,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Download official Xray Android binaries
+      - name: Download Xray Android ARM64
         shell: bash
         run: |
-          set -euo pipefail
-
-          VERSION="26.9.8"
-          BASE="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}"
-
           mkdir -p v2ray/src/main/assets/xray/arm64-v8a
 
-          ABI="arm64-v8a"
-          ARCHIVE="Xray-android-${ABI}.zip"
+          curl -L \
+            -o /tmp/xray.zip \
+            https://github.com/XTLS/Xray-core/releases/download/v26.9.8/Xray-android-arm64-v8a.zip
 
-          curl -fL --retry 3 \
-            -o "/tmp/${ARCHIVE}" \
-            "${BASE}/${ARCHIVE}"
+          unzip -o /tmp/xray.zip -d /tmp/xray
 
-          rm -rf "/tmp/xray-${ABI}"
-          mkdir -p "/tmp/xray-${ABI}"
+          find /tmp/xray -type f -name xray -exec cp {} v2ray/src/main/assets/xray/arm64-v8a/xray \;
 
-          unzip -oq "/tmp/${ARCHIVE}" -d "/tmp/xray-${ABI}"
-
-          BIN="$(find "/tmp/xray-${ABI}" -type f -name xray -perm -u+x | head -n1)"
-
-          if [ -z "${BIN}" ]; then
-            BIN="$(find "/tmp/xray-${ABI}" -type f -name xray | head -n1)"
-          fi
-
-          test -n "${BIN}"
-
-          cp "${BIN}" "v2ray/src/main/assets/xray/${ABI}/xray"
-
-          chmod 755 "v2ray/src/main/assets/xray/${ABI}/xray"
-
-          file v2ray/src/main/assets/xray/arm64-v8a/xray
+          chmod +x v2ray/src/main/assets/xray/arm64-v8a/xray
 
       - name: Fix Gradle permission
         shell: bash
@@ -71,30 +50,73 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Rename APK
+      # بررسی نام پکیج و versionCode
+      - name: Inspect release APK package
         shell: bash
         run: |
-          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
 
+          echo "========================================"
+          echo "APK: $APK"
+          echo "========================================"
+
+          AAPT2=$(find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name aapt2 \
+            | sort -V \
+            | tail -n 1)
+
+          echo "AAPT2: $AAPT2"
+
+          echo "========== APK PACKAGE INFO =========="
+          "$AAPT2" dump badging "$APK" | head -n 10
+
+      # بررسی امضای APK
+      - name: Verify release APK signing
+        shell: bash
+        run: |
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name apksigner \
+            | sort -V \
+            | tail -n 1)
+
+          echo "========================================"
+          echo "APK SIGNING INFORMATION"
+          echo "========================================"
+
+          echo "APK: $APK"
+          echo "APKSIGNER: $APKSIGNER"
+
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            "$APK"
+
+      - name: Prepare release files
+        shell: bash
+        run: |
           mkdir -p release
 
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n1)"
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
 
-          test -n "${APK}"
+          cp "$APK" release/TehVPN-XHTTP-1.010-release.apk
 
-          cp "${APK}" "release/TehVPN-XHTTP-1.010-release.apk"
+          sha256sum release/TehVPN-XHTTP-1.010-release.apk \
+            > release/SHA256SUMS.txt
 
-          sha256sum "release/TehVPN-XHTTP-1.010-release.apk" > release/SHA256SUMS.txt
-
-      - name: Upload workflow artifact
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: TehVPN-XHTTP-release
-          path: release/*
+          path: release/
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
-          generate_release_notes: true
+          files: |
+            release/TehVPN-XHTTP-1.010-release.apk
+            release/SHA256SUMS.txt
