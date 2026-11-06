@@ -333,6 +333,7 @@ OPENCONNECT_SRC := ..
 OPENCONNECT_BUILD := $(TRIPLET)/openconnect
 
 $(OPENCONNECT_SRC)/configure:
+	sed -i '/^bashcompletiondir = /d; /^bashcompletion_DATA = /d' $(OPENCONNECT_SRC)/Makefile.am
 	cd $(OPENCONNECT_SRC) && ./autogen.sh
 
 $(OPENCONNECT_BUILD)/Makefile: $(OC_SYSROOT) $(GNUTLS_DEPS) $(LIBXML_DEPS) \
