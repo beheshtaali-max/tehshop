@@ -57,6 +57,7 @@ class CiscoAdapter(
         ProfileManager.init(appContext)
         val profile = ProfileManager.create(normalizedHost)
         profileUuid = profile.getUUIDString()
+        GrantPermissionsActivity.activateProfile(profile.getUUIDString())
 
         // Avoid leaving an old profile or service behind if a previous attempt was interrupted.
         runCatching { ProfileManager.setConnectedVpnProfileDisconnected() }
@@ -143,6 +144,7 @@ class CiscoAdapter(
 
     private fun cleanupProfile() {
         val uuid = profileUuid
+        if (uuid != null) GrantPermissionsActivity.deactivateProfile(uuid)
         profileUuid = null
         if (uuid != null) {
             runCatching { ProfileManager.setConnectedVpnProfileDisconnected() }
