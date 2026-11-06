@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "net.openconnect_vpn.android"
+    namespace = "pw.fullvpn.android"
     compileSdk { version = release(36) }
     defaultConfig {
         minSdk = 26
