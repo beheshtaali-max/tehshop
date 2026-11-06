@@ -20,6 +20,7 @@ import net.openconnect_vpn.android.core.OpenConnectManagementThread
 import net.openconnect_vpn.android.core.OpenVpnService
 import net.openconnect_vpn.android.core.ProfileManager
 import net.openconnect_vpn.android.core.VPNConnector
+import org.infradead.libopenconnect.LibOpenConnect.VPNStats
 
 /**
  * Cisco AnyConnect adapter backed by the upstream OpenConnect Android engine.
@@ -76,8 +77,8 @@ class CiscoAdapter(
                 }
                 if (statsValid) {
                     setTraffic(
-                        downloadBps = deltaStats.rxBytes.coerceAtLeast(0),
-                        uploadBps = deltaStats.txBytes.coerceAtLeast(0)
+                        downloadBps = deltaStats.rxBytes.coerceAtLeast(0L),
+                        uploadBps = deltaStats.txBytes.coerceAtLeast(0L)
                     )
                 }
             }
