@@ -3,8 +3,6 @@ package com.example.fulluikotlin.ui.screens.login
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import android.util.Log
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +55,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.fulluikotlin.ui.commponent.LightningLoading
 import com.example.fulluikotlin.ui.screens.devicesactive.DevicesActiveBottomSheet
@@ -64,12 +63,14 @@ import com.example.fulluikotlin.ui.theme.FullKotlinTheme
 import com.example.fulluikotlin.ui.theme.fullColors
 import com.example.fulluikotlin.ui.utils.LinkOpener
 import org.koin.androidx.compose.koinViewModel
+import pw.fullvpn.android.BuildConfig
 import pw.fullvpn.android.R
 
 @Composable
 fun LoginScreen(
     navController: NavController,
-    viewModel: LoginViewModel? = null
+    viewModel: LoginViewModel? = null,
+    initialErrorMessage: String? = null
 ) {
     val context = LocalContext.current
     val device = remember { getUniqueKey(context) }
@@ -77,6 +78,10 @@ fun LoginScreen(
     val uiState by loginViewModel.uiState.collectAsState()
     val devices by loginViewModel.devicesFlow.collectAsState()
     val telegramSupportId by loginViewModel.telegramSupportIdFlow.collectAsState(initial = null)
+
+    LaunchedEffect(initialErrorMessage) {
+        initialErrorMessage?.let(loginViewModel::showExternalError)
+    }
 
     LaunchedEffect(uiState.isLoginSuccess) {
         if (uiState.isLoginSuccess) {
@@ -102,7 +107,6 @@ fun LoginScreen(
         onUsernameChange = loginViewModel::onUsernameChange,
         onPasswordChange = loginViewModel::onPasswordChange,
         onLoginClick = {
-            Log.e("device", device)
             loginViewModel.login(device)
         },
         telegramSupportId = telegramSupportId
@@ -120,12 +124,6 @@ fun LoginContent(
 ) {
     val context = LocalContext.current
 
-
-    LaunchedEffect(uiState.errorMessage) {
-        if (!uiState.isLoading && uiState.errorMessage != null) {
-            Toast.makeText(context, uiState.errorMessage, Toast.LENGTH_LONG).show()
-        }
-    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -343,8 +341,16 @@ fun LoginContent(
                 }
             }
 
-            uiState.errorMessage?.let {
-                Log.e("error", it)
+            uiState.errorMessage?.let { message ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = message,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.fullColors.red2,
+                    textAlign = TextAlign.Center,
+                    fontFamily = FontFamily(Font(R.font.yekanbakh_medium))
+                )
             }
 
             Spacer(
@@ -438,6 +444,14 @@ fun SelectionLogo() {
                     style = SpanStyle(color = MaterialTheme.fullColors.whitBlack)
                 ) {
                     append("VPN")
+                }
+                withStyle(
+                    style = SpanStyle(
+                        color = MaterialTheme.fullColors.whitBlack,
+                        fontSize = 8.sp
+                    )
+                ) {
+                    append(" v${BuildConfig.VERSION_NAME}")
                 }
             },
             style = MaterialTheme.typography.headlineLarge,

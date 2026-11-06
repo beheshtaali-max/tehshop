@@ -13,5 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
-release-key.key
-release-key.base64
+
+/key
+*.jks
+*.keystore
+
+.kotlin/

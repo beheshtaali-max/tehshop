@@ -1,4 +1,6 @@
 [versions]
+googleServices = "4.5.0"
+firebaseCrashlyticsPlugin = "3.0.7"
 accompanistDrawablepainter = "0.37.3"
 agp = "9.0.1"
 core = "1.13.1"
@@ -72,6 +74,8 @@ localbroadcastmanager = { group = "androidx.localbroadcastmanager", name = "loca
 androidx-preference-ktx = { group = "androidx.preference", name = "preference-ktx", version.ref = "preference" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 [plugins]
+google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebaseCrashlyticsPlugin" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

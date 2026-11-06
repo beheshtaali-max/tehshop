@@ -8,6 +8,7 @@ import com.example.fulluikotlin.domain.model.CustomDialogStatus
 import com.example.fulluikotlin.domain.model.Faq
 import com.example.fulluikotlin.domain.model.UpdateDetails
 import com.example.fulluikotlin.domain.repository.AppRepository
+import com.example.fulluikotlin.domain.utils.AppErrorCode
 import com.example.fulluikotlin.domain.utils.Resource
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -23,7 +24,10 @@ class AppRepositoryImpl(
                 val details = mapToDomain(response)
                 Resource.Success(details)
             } else {
-                Resource.Error("خطا در دریافت اطلاعات برنامه")
+                Resource.Error(
+                    message = AppErrorCode.APP_DETAILS_FAILED.displayMessage(),
+                    supportCode = AppErrorCode.APP_DETAILS_FAILED.code
+                )
             }
         } catch (e: Exception) {
             Resource.Exception(e)

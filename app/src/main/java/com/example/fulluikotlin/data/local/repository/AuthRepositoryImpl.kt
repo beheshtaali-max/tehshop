@@ -1,6 +1,7 @@
 package com.example.fulluikotlin.data.local.repository
 
 import android.util.Log
+import com.example.fulluikotlin.data.local.datastore.AppDetailsDataStore
 import com.example.fulluikotlin.data.local.datastore.ServerDataStore
 import com.example.fulluikotlin.data.local.datastore.UserDataStore
 import com.example.fulluikotlin.data.local.network.api.AuthApi
@@ -10,7 +11,10 @@ import com.example.fulluikotlin.domain.model.ProtocolType
 import com.example.fulluikotlin.domain.model.Server
 import com.example.fulluikotlin.domain.model.User
 import com.example.fulluikotlin.domain.repository.AuthRepository
+import com.example.fulluikotlin.domain.utils.AppErrorCode
 import com.example.fulluikotlin.domain.utils.Resource
+import com.example.fulluikotlin.infrastructure.reporting.FirebaseErrorReporter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -18,7 +22,8 @@ import kotlinx.coroutines.withContext
 class AuthRepositoryImpl(
     private val authApi: AuthApi,
     private val userDataStore: UserDataStore,
-    private val serverDataStore: ServerDataStore
+    private val serverDataStore: ServerDataStore,
+    private val appDetailsDataStore: AppDetailsDataStore
 ) : AuthRepository {
 
     override suspend fun login(
@@ -34,7 +39,7 @@ class AuthRepositoryImpl(
                     val user = User(
                         id = response.user_id ?: "",
                         username = username,
-                        device = device ?: "",
+                        device = device,
                         devices = response.devices,
                         creationDate = response.creation_date ?: "",
                         expDate = response.exp_date ?: "",
@@ -45,30 +50,41 @@ class AuthRepositoryImpl(
                         remainDevice = response.remain_device ?: "",
                         isExpired = response.isExpired ?: true
                     )
-                    userDataStore.saveUser(user)
-                    updateServersFromResponse(response.servers)
-
-                    val devicesString = user?.devices
-                    val devicesList = if (!devicesString.isNullOrEmpty()) {
-                        devicesString.split("&&")
-                    } else {
-                        emptyList()
-                    }
-
-                    userDataStore.clearMultiLoginData()
-                    userDataStore.saveMultiLoginDevices(devicesList)
-                    userDataStore.saveMultiLoginCredentials(username, password, device)
-                    userDataStore.saveSavedCredentials(username, password)
+                    // AUTH succeeded. A server-cache problem is reported separately and must not
+                    // turn a valid login into an authentication failure.
+                    updateServersWithoutBreakingAuthentication(response.servers)
+                    userDataStore.saveAuthenticatedSession(user, password)
                     Resource.Success(user)
                 }
 
                 "AUTHENTICATE_ERROR" -> {
-                    val errorMessage = when {
-                        response.ERRORTEXT == "User Not Found." -> "نام کاربری یا رمز عبور اشتباه است"
-                        !response.ERRORTEXT.isNullOrEmpty() -> response.ERRORTEXT
-                        else -> "خطای احراز هویت"
+                    val errorCode = if (isInvalidCredentialMessage(response.ERRORTEXT)) {
+                        AppErrorCode.AUTH_INVALID_CREDENTIALS
+                    } else {
+                        AppErrorCode.AUTH_ACCOUNT_REJECTED
                     }
-                    Resource.Error(errorMessage)
+
+                    val supportCode = buildServerSupportCode(
+                        errorCode = errorCode,
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    reportServerAuthErrorIfNeeded(
+                        errorCode = errorCode,
+                        supportCode = supportCode,
+                        context = "manual_or_auto_login_authenticate_error",
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+
+                    Resource.Error(
+                        message = errorCode.displayMessage(supportCode),
+                        supportCode = supportCode,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
                 }
 
                 "ERROR" -> {
@@ -76,14 +92,56 @@ class AuthRepositoryImpl(
                         val devicesList = response.devices?.split("&&") ?: emptyList()
                         Resource.MultiLoginError(devicesList)
                     } else {
-                        Resource.Error(response.ERRORTEXT ?: "خطای ناشناخته")
+                        val errorCode = AppErrorCode.AUTH_ACCOUNT_REJECTED
+                        val supportCode = buildServerSupportCode(
+                            errorCode = errorCode,
+                            status = response.status,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
+                        reportServerAuthErrorIfNeeded(
+                            errorCode = errorCode,
+                            supportCode = supportCode,
+                            context = "manual_or_auto_login_server_error",
+                            status = response.status,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
+                        Resource.Error(
+                            message = errorCode.displayMessage(supportCode),
+                            supportCode = supportCode,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
                     }
                 }
 
                 else -> {
-                    Resource.Error("پاسخ نامعتبر از سرور")
+                    val errorCode = AppErrorCode.AUTH_INVALID_RESPONSE
+                    val supportCode = buildServerSupportCode(
+                        errorCode = errorCode,
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    reportServerAuthErrorIfNeeded(
+                        errorCode = errorCode,
+                        supportCode = supportCode,
+                        context = "manual_or_auto_login_unknown_status",
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    Resource.Error(
+                        message = errorCode.displayMessage(supportCode),
+                        supportCode = supportCode,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Resource.Exception(e)
         }
@@ -103,7 +161,7 @@ class AuthRepositoryImpl(
                     val user = User(
                         id = response.user_id ?: "",
                         username = username,
-                        device = device ?: "",
+                        device = device,
                         devices = response.devices,
                         creationDate = response.creation_date ?: "",
                         expDate = response.exp_date ?: "",
@@ -114,25 +172,37 @@ class AuthRepositoryImpl(
                         remainDevice = response.remain_device ?: "",
                         isExpired = response.isExpired ?: true
                     )
-                    userDataStore.saveUser(user)
-
-                    updateServersFromResponse(response.servers)
-
-                    val devicesString = user?.devices
-                    val devicesList = if (!devicesString.isNullOrEmpty()) {
-                        devicesString.split("&&")
-                    } else {
-                        emptyList()
-                    }
-
-                    userDataStore.clearMultiLoginData()
-                    userDataStore.saveMultiLoginDevices(devicesList)
-                    userDataStore.saveMultiLoginCredentials(username, password, device)
+                    updateServersWithoutBreakingAuthentication(response.servers)
+                    userDataStore.saveAuthenticatedSession(user, password)
                     Resource.Success(user)
                 }
 
                 "AUTHENTICATE_ERROR" -> {
-                    Resource.Error(response.ERRORTEXT ?: "نام کاربری یا رمز عبور اشتباه است")
+                    val errorCode = if (isInvalidCredentialMessage(response.ERRORTEXT)) {
+                        AppErrorCode.AUTH_INVALID_CREDENTIALS
+                    } else {
+                        AppErrorCode.AUTH_ACCOUNT_REJECTED
+                    }
+                    val supportCode = buildServerSupportCode(
+                        errorCode = errorCode,
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    reportServerAuthErrorIfNeeded(
+                        errorCode = errorCode,
+                        supportCode = supportCode,
+                        context = "usage_authenticate_error",
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    Resource.Error(
+                        message = errorCode.displayMessage(supportCode),
+                        supportCode = supportCode,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
                 }
 
                 "ERROR" -> {
@@ -140,14 +210,56 @@ class AuthRepositoryImpl(
                         val devicesList = response.devices?.split("&&") ?: emptyList()
                         Resource.MultiLoginError(devicesList)
                     } else {
-                        Resource.Error(response.ERRORTEXT ?: "خطای ناشناخته")
+                        val errorCode = AppErrorCode.AUTH_ACCOUNT_REJECTED
+                        val supportCode = buildServerSupportCode(
+                            errorCode = errorCode,
+                            status = response.status,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
+                        reportServerAuthErrorIfNeeded(
+                            errorCode = errorCode,
+                            supportCode = supportCode,
+                            context = "usage_server_error",
+                            status = response.status,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
+                        Resource.Error(
+                            message = errorCode.displayMessage(supportCode),
+                            supportCode = supportCode,
+                            serverCode = response.code,
+                            serverMessage = response.ERRORTEXT
+                        )
                     }
                 }
 
                 else -> {
-                    Resource.Error("پاسخ نامعتبر از سرور")
+                    val errorCode = AppErrorCode.AUTH_INVALID_RESPONSE
+                    val supportCode = buildServerSupportCode(
+                        errorCode = errorCode,
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    reportServerAuthErrorIfNeeded(
+                        errorCode = errorCode,
+                        supportCode = supportCode,
+                        context = "usage_unknown_status",
+                        status = response.status,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
+                    Resource.Error(
+                        message = errorCode.displayMessage(supportCode),
+                        supportCode = supportCode,
+                        serverCode = response.code,
+                        serverMessage = response.ERRORTEXT
+                    )
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Resource.Exception(e)
         }
@@ -159,10 +271,97 @@ class AuthRepositoryImpl(
             if (response.STATUS == "SUCCESS") {
                 Resource.Success(Unit)
             } else {
-                Resource.Error(response.ERRORTEXT ?: "خطا در حذف دستگاه")
+                val errorCode = AppErrorCode.DEVICE_DELETE_FAILED
+                val supportCode = buildServerSupportCode(
+                    errorCode = errorCode,
+                    status = response.STATUS,
+                    serverCode = null,
+                    serverMessage = response.ERRORTEXT
+                )
+                reportServerAuthErrorIfNeeded(
+                    errorCode = errorCode,
+                    supportCode = supportCode,
+                    context = "delete_device_server_error",
+                    status = response.STATUS,
+                    serverCode = null,
+                    serverMessage = response.ERRORTEXT
+                )
+                Resource.Error(
+                    message = errorCode.displayMessage(supportCode),
+                    supportCode = supportCode,
+                    serverMessage = response.ERRORTEXT
+                )
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Resource.Exception(e)
+        }
+    }
+
+    private fun isInvalidCredentialMessage(serverMessage: String?): Boolean {
+        val normalized = serverMessage.orEmpty().trim().lowercase()
+        return normalized.isBlank() ||
+            normalized.contains("user not found") ||
+            normalized.contains("invalid credential") ||
+            normalized.contains("invalid password") ||
+            normalized.contains("wrong password") ||
+            normalized.contains("incorrect password")
+    }
+
+    private fun buildServerSupportCode(
+        errorCode: AppErrorCode,
+        status: String?,
+        serverCode: String?,
+        serverMessage: String?
+    ): String {
+        if (errorCode == AppErrorCode.AUTH_INVALID_CREDENTIALS) {
+            return errorCode.code
+        }
+
+        val fingerprintInput = listOf(status, serverCode, serverMessage)
+            .joinToString("|") { it.orEmpty().trim().lowercase() }
+        val suffix = Integer.toUnsignedString(fingerprintInput.hashCode(), 36)
+            .uppercase()
+            .padStart(4, '0')
+            .takeLast(4)
+        return "${errorCode.code}-$suffix"
+    }
+
+    private fun reportServerAuthErrorIfNeeded(
+        errorCode: AppErrorCode,
+        supportCode: String,
+        context: String,
+        status: String?,
+        serverCode: String?,
+        serverMessage: String?
+    ) {
+        FirebaseErrorReporter.report(
+            errorCode = errorCode,
+            supportCode = supportCode,
+            context = context,
+            details = mapOf(
+                "server_status" to status,
+                "server_code" to serverCode,
+                "server_message" to serverMessage
+            )
+        )
+    }
+
+    private suspend fun updateServersWithoutBreakingAuthentication(serverList: List<ServerNetwork>?) {
+        try {
+            updateServersFromResponse(serverList)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // AUTH succeeded. A damaged/temporarily unwritable server cache must not be
+            // reported to Splash as a failed login or force the user into an auth loop.
+            Log.e("AuthRepository", "server cache update failed after successful authentication", error)
+            FirebaseErrorReporter.report(
+                errorCode = AppErrorCode.LOCAL_STORAGE_FAILED,
+                context = "server_cache_after_auth",
+                throwable = error
+            )
         }
     }
 
@@ -172,7 +371,7 @@ class AuthRepositoryImpl(
             // In that case the empty array means "do not refresh servers", not "delete all servers".
             // Keep the previous cached list, organized list and selected server exactly as they are.
             withContext(Dispatchers.IO) {
-                val cachedServers = serverDataStore.serversFlow.first()
+                val cachedServers = serverDataStore.getServers()
                 if (cachedServers.isEmpty()) {
                     Log.w(
                         "AuthRepository",
@@ -200,9 +399,9 @@ class AuthRepositoryImpl(
                 )
             }
 
-            val cachedServers = serverDataStore.serversFlow.first()
+            val cachedServers = serverDataStore.getServers()
             val hasServerListChanged = !hasSameServerPayload(cachedServers, domainServers)
-            val needsOrganizedRebuild = serverDataStore.organizedServersFlow.first() == null
+            val needsOrganizedRebuild = serverDataStore.getOrganizedServers() == null
 
             if (hasServerListChanged || needsOrganizedRebuild) {
                 if (hasServerListChanged) {
@@ -241,11 +440,8 @@ class AuthRepositoryImpl(
     }
 
     private fun mapToDomain(network: ServerNetwork, isActive: Boolean): Server {
-        val protocolType = try {
-            ProtocolType.valueOf(network.protocol.uppercase())
-        } catch (e: Exception) {
-            ProtocolType.V2RAY
-        }
+        val protocolType = ProtocolType.fromExternalName(network.protocol)
+            ?: ProtocolType.V2RAY
         return Server(
             serverid = network.serverid,
             servername = network.servername,
@@ -272,28 +468,34 @@ class AuthRepositoryImpl(
             return
         }
 
-        val currentSelectedServer = serverDataStore.getSelectedServer()
-        val fallbackServer = servers.first()
+        val availableProtocols = servers.map { it.protocol }.distinct()
+        val savedProtocol = serverDataStore.getSelectedProtocol()
+            ?.takeIf { it in availableProtocols }
+        val apiDefaultProtocol = ProtocolType.fromExternalName(
+            appDetailsDataStore.getDefaultProtocol()
+        )?.takeIf { it in availableProtocols }
 
-        if (currentSelectedServer == null) {
-            serverDataStore.selectServer(fallbackServer)
-            serverDataStore.saveSelectedProtocol(fallbackServer.protocol)
+        // A valid user choice always wins. GETAPPDETAILS.defaultprotocol is only the
+        // first-use/fallback choice when there is no valid selection in DataStore.
+        val preferredProtocol = savedProtocol ?: apiDefaultProtocol ?: servers.first().protocol
+
+        if (serverDataStore.isSmartServerSelection()) {
+            serverDataStore.selectSmartServer(preferredProtocol)
             return
         }
 
-        // جستجوی سرور با همان serverid در لیست جدید
-        val updatedServer = servers.find { it.serverid == currentSelectedServer.serverid }
-
-        if (updatedServer == null) {
-            // سرور قبلی دیگر وجود ندارد؛ برای جلوگیری از خالی شدن Home، اولین سرور معتبر را انتخاب می‌کنیم.
-            serverDataStore.selectServer(fallbackServer)
-            serverDataStore.saveSelectedProtocol(fallbackServer.protocol)
-        } else {
-            // سرور وجود دارد، اما ممکن است اطلاعاتش تغییر کرده باشد
-            // ذخیره نسخه به‌روز شده به عنوان سرور انتخاب شده
-            serverDataStore.selectServer(updatedServer)
-            // همچنین پروتکل آن را نیز ذخیره می‌کنیم
-            serverDataStore.saveSelectedProtocol(updatedServer.protocol)
+        val currentSelectedServer = serverDataStore.getSelectedServer()
+        val refreshedCurrentServer = currentSelectedServer?.let { current ->
+            servers.firstOrNull {
+                it.serverid == current.serverid && it.protocol == preferredProtocol
+            }
         }
+
+        val selected = refreshedCurrentServer
+            ?: servers.firstOrNull { it.protocol == preferredProtocol }
+            ?: servers.first()
+
+        serverDataStore.selectServer(selected)
     }
+
 }

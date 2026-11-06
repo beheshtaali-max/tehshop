@@ -1,5 +1,6 @@
 package com.example.fulluikotlin.ui.screens.home
 
+
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.LocalActivity
@@ -34,9 +35,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -47,7 +46,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -72,6 +70,10 @@ fun HomeScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val elapsedTimeFormatted by remember { derivedStateOf { viewModel.formatElapsedTime() } }
     val selectedServer = viewModel.serverSelected
+    val smartResolvedServer = viewModel.smartResolvedServer
+    val isSmartSelection by viewModel.isSmartServerSelection.collectAsState()
+    val smartSearchState by viewModel.smartSearchState.collectAsState()
+    val displayedServer = if (isSmartSelection) smartResolvedServer else selectedServer
     val publicIp by viewModel.publicIp.collectAsState()
     val isIpLoading by viewModel.isIpLoading.collectAsState()
     val totalDownloadBytes by viewModel.totalDownloadBytes.collectAsState()
@@ -79,7 +81,6 @@ fun HomeScreen(
 
     DisposableEffect(Unit) {
         viewModel.registerStatsReceiver(context)
-
         onDispose {
             viewModel.unregisterStatsReceiver(context)
         }
@@ -98,18 +99,18 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
+
             Spacer(
                 modifier = Modifier.height(15.dp)
             )
 
             ServerSelectedUi(
-                server = selectedServer,
+                server = displayedServer,
                 ip = publicIp,
                 isIpLoading = isIpLoading,
                 isConnected = connectionState is ConnectionState.Connected,
-                onClick = {
-                    navController.navigate("servers")
-                }
+                isSmartSelection = isSmartSelection,
+                onClick = { navController.navigate("servers") }
             )
 
             Spacer(
@@ -128,8 +129,7 @@ fun HomeScreen(
             ButtonConnect(
                 state = connectionState,
                 onClick = {
-                    if (
-                        connectionState is ConnectionState.Connected ||
+                    if (connectionState is ConnectionState.Connected ||
                         connectionState is ConnectionState.Connecting
                     ) {
                         viewModel.disconnect(context)
@@ -137,33 +137,35 @@ fun HomeScreen(
                         activity?.let {
                             viewModel.connect(
                                 activity = it,
-                                server = selectedServer,
+                                server = displayedServer,
                             )
                         } ?: run {
-                            Toast.makeText(
-                                context,
-                                "Activity not available",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            Toast.makeText(context, "Activity not available", Toast.LENGTH_SHORT)
+                                .show()
                         }
                     }
                 }
             )
 
-            Spacer(
-                modifier = Modifier.height(35.dp)
-            )
+            Spacer(modifier = Modifier.height(35.dp))
 
             TimeAndStatus(
                 state = connectionState,
                 elapsedTime = elapsedTimeFormatted,
             )
-
-            Spacer(
-                modifier = Modifier.height(18.dp)
-            )
-
         }
+
+        SmartServerSearchDialog(
+            state = smartSearchState,
+            onCancel = viewModel::cancelSmartSearch,
+            onConnectCurrentBest = {
+                activity?.let { viewModel.connectToCurrentBest(it) }
+            },
+            onRetry = {
+                activity?.let { viewModel.retrySmartSearch(it) }
+            },
+            onDismissError = viewModel::dismissSmartSearchError
+        )
     }
 }
 
@@ -173,19 +175,16 @@ fun ServerSelectedUi(
     ip: String?,
     isIpLoading: Boolean,
     isConnected: Boolean,
+    isSmartSelection: Boolean,
     onClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(65.dp)
-            .clickable {
-                onClick()
-            },
+            .clickable { onClick() },
         shape = RoundedCornerShape(92.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.fullColors.bgServerSelected
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.fullColors.bgServerSelected)
     ) {
         Row(
             modifier = Modifier
@@ -196,9 +195,7 @@ fun ServerSelectedUi(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Icon(
-                painter = painterResource(
-                    R.drawable.ic_arrow_circle_left
-                ),
+                painter = painterResource(R.drawable.ic_arrow_circle_left),
                 contentDescription = "IconGoChangeServers",
                 modifier = Modifier,
                 tint = MaterialTheme.fullColors.iconColor
@@ -212,14 +209,15 @@ fun ServerSelectedUi(
                 verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Text(
-                    text = server?.servername
-                        ?: "هیچ سروری انتخاب نشده",
+                    text = when {
+                        isSmartSelection && server == null -> "انتخاب خودکار"
+                        server != null -> server.servername
+                        else -> "هیچ سروری انتخاب نشده"
+                    },
                     modifier = Modifier,
                     color = MaterialTheme.fullColors.whitBlack,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily(
-                        Font(R.font.opensans_bold)
-                    )
+                    fontFamily = FontFamily(Font(R.font.opensans_bold))
                 )
 
                 Row(
@@ -234,9 +232,7 @@ fun ServerSelectedUi(
                                     text = "...",
                                     color = MaterialTheme.fullColors.pingText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily(
-                                        Font(R.font.gilroy_medium)
-                                    )
+                                    fontFamily = FontFamily(Font(R.font.gilroy_medium))
                                 )
                             }
 
@@ -245,57 +241,67 @@ fun ServerSelectedUi(
                                     text = ip,
                                     color = MaterialTheme.fullColors.pingText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily(
-                                        Font(R.font.gilroy_medium)
-                                    )
+                                    fontFamily = FontFamily(Font(R.font.gilroy_medium))
                                 )
                             }
 
                             else -> {
-                                Spacer(
-                                    modifier = Modifier.width(1.dp)
-                                )
+                                Spacer(modifier = Modifier.width(1.dp))
                             }
                         }
+                    } else if (isSmartSelection && server == null) {
+                        Text(
+                            text = "اتصال خودکار به بهترین سرور",
+                            color = MaterialTheme.fullColors.pingText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily(Font(R.font.yekanbakh_regular))
+                        )
                     } else {
-                        Spacer(
-                            modifier = Modifier.width(1.dp)
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+                }
+
+            }
+
+            if (isSmartSelection && server == null) {
+                Surface(
+                    modifier = Modifier.size(38.dp),
+                    color = MaterialTheme.fullColors.purple.copy(alpha = 0.16f),
+                    shape = CircleShape
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_signal_good),
+                            contentDescription = "Smart server",
+                            modifier = Modifier.size(25.dp),
+                            tint = Color.Unspecified
                         )
                     }
                 }
-            }
+            } else {
+                val flagResId = remember(server?.serverimagename) {
+                    val countryName = server?.serverimagename ?: "unknown"
+                    World.getFlagOf(countryName)
+                }
 
-            val flagResId = remember(
-                server?.serverimagename
-            ) {
-                val countryName =
-                    server?.serverimagename ?: "unknown"
-
-                World.getFlagOf(countryName)
-            }
-
-            Surface(
-                color = MaterialTheme.fullColors.transparent,
-                shape = CircleShape
-            ) {
-                Image(
-                    painter = painterResource(
-                        id = flagResId
-                    ),
-                    contentDescription = "FlagServer",
-                    modifier = Modifier.size(32.dp),
-                    contentScale = ContentScale.Crop
-                )
+                Surface(
+                    color = MaterialTheme.fullColors.transparent,
+                    shape = CircleShape
+                ) {
+                    Image(
+                        painter = painterResource(id = flagResId),
+                        contentDescription = "FlagServer",
+                        modifier = Modifier.size(32.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun ConsumptionAmount(
-    download: String,
-    upload: String
-) {
+fun ConsumptionAmount(download: String, upload: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -316,13 +322,12 @@ fun ConsumptionAmount(
                 modifier = Modifier,
                 color = MaterialTheme.fullColors.textValueAmount,
                 style = MaterialTheme.typography.titleSmall,
-                fontFamily = FontFamily(
-                    Font(R.font.yekanbakh_bold)
-                )
+                fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
             )
 
             Row(
-                modifier = Modifier.wrapContentHeight(),
+                modifier = Modifier
+                    .wrapContentHeight(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -331,9 +336,7 @@ fun ConsumptionAmount(
                     modifier = Modifier,
                     color = MaterialTheme.fullColors.textAmount,
                     style = MaterialTheme.typography.labelLarge,
-                    fontFamily = FontFamily(
-                        Font(R.font.yekanbakh_regular)
-                    )
+                    fontFamily = FontFamily(Font(R.font.yekanbakh_regular))
                 )
 
                 Surface(
@@ -345,16 +348,17 @@ fun ConsumptionAmount(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            painter = painterResource(
-                                R.drawable.ic_download
-                            ),
+                            painter = painterResource(R.drawable.ic_download),
                             contentDescription = "IconDownload",
                             modifier = Modifier.size(20.dp),
                             tint = Color.White
                         )
                     }
                 }
+
+
             }
+
         }
 
         Column(
@@ -370,9 +374,7 @@ fun ConsumptionAmount(
                 modifier = Modifier,
                 color = MaterialTheme.fullColors.whitBlack,
                 style = MaterialTheme.typography.titleSmall,
-                fontFamily = FontFamily(
-                    Font(R.font.yekanbakh_bold)
-                )
+                fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
             )
 
             Row(
@@ -385,9 +387,7 @@ fun ConsumptionAmount(
                     modifier = Modifier,
                     color = MaterialTheme.fullColors.textAmount,
                     style = MaterialTheme.typography.labelLarge,
-                    fontFamily = FontFamily(
-                        Font(R.font.yekanbakh_regular)
-                    )
+                    fontFamily = FontFamily(Font(R.font.yekanbakh_regular))
                 )
 
                 Surface(
@@ -396,9 +396,7 @@ fun ConsumptionAmount(
                     color = MaterialTheme.fullColors.green
                 ) {
                     Icon(
-                        painter = painterResource(
-                            R.drawable.ic_upload
-                        ),
+                        painter = painterResource(R.drawable.ic_upload),
                         contentDescription = "IconUpload",
                         modifier = Modifier
                             .size(20.dp)
@@ -406,7 +404,9 @@ fun ConsumptionAmount(
                         tint = Color.White
                     )
                 }
+
             }
+
         }
     }
 }
@@ -417,61 +417,34 @@ fun ButtonConnect(
     onClick: () -> Unit
 ) {
     val outerCardColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.transparent
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.transparent
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.bgButtonL1Connecting
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.bgButtonL1Connected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.transparent
+        is ConnectionState.Error -> MaterialTheme.fullColors.transparent
+        ConnectionState.Connecting -> MaterialTheme.fullColors.bgButtonL1Connecting
+        ConnectionState.Connected -> MaterialTheme.fullColors.bgButtonL1Connected
     }
 
     val middleBorderColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.bgButtonL1DisConnect
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.bgButtonL1DisConnect
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.transparent
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.bgButtonL1Connected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.bgButtonL1DisConnect
+        is ConnectionState.Error -> MaterialTheme.fullColors.bgButtonL1DisConnect
+        ConnectionState.Connecting -> MaterialTheme.fullColors.transparent
+        ConnectionState.Connected -> MaterialTheme.fullColors.bgButtonL1Connected
     }
 
     val middleCardColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.bgButtonL2DisConnect
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.bgButtonL2DisConnect
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.bgButtonL2Connecting
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.bgButtonL2Connected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.bgButtonL2DisConnect
+        is ConnectionState.Error -> MaterialTheme.fullColors.bgButtonL2DisConnect
+        ConnectionState.Connecting -> MaterialTheme.fullColors.bgButtonL2Connecting
+        ConnectionState.Connected -> MaterialTheme.fullColors.bgButtonL2Connected
     }
 
     val innerCardColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.bgButtonL3DisConnect
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.bgButtonL3DisConnect
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.bgButtonL3Connecting
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.bgButtonL2Connected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.bgButtonL3DisConnect
+        is ConnectionState.Error -> MaterialTheme.fullColors.bgButtonL3DisConnect
+        ConnectionState.Connecting -> MaterialTheme.fullColors.bgButtonL3Connecting
+        ConnectionState.Connected -> MaterialTheme.fullColors.bgButtonL2Connected  // همانطور که در کد شما بود
     }
 
+    // The button must stay clickable while Connecting so the user can cancel a stuck connection.
     val enabled = true
 
     Card(
@@ -479,18 +452,12 @@ fun ButtonConnect(
             .size(184.dp)
             .clickable(
                 enabled = enabled,
-                interactionSource = remember {
-                    MutableInteractionSource()
-                },
+                interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = {
-                    onClick()
-                }
+                onClick = { onClick() }
             ),
         shape = CircleShape,
-        colors = CardDefaults.cardColors(
-            containerColor = outerCardColor
-        )
+        colors = CardDefaults.cardColors(containerColor = outerCardColor)
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -506,18 +473,12 @@ fun ButtonConnect(
                     )
                     .clickable(
                         enabled = enabled,
-                        interactionSource = remember {
-                            MutableInteractionSource()
-                        },
+                        interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = {
-                            onClick()
-                        }
+                        onClick = { onClick() }
                     ),
                 shape = CircleShape,
-                colors = CardDefaults.cardColors(
-                    containerColor = middleCardColor
-                )
+                colors = CardDefaults.cardColors(containerColor = middleCardColor)
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -526,21 +487,15 @@ fun ButtonConnect(
                     Card(
                         modifier = Modifier.size(120.dp),
                         shape = CircleShape,
-                        colors = CardDefaults.cardColors(
-                            containerColor = innerCardColor
-                        )
+                        colors = CardDefaults.cardColors(containerColor = innerCardColor)
                     ) {
+
                         Icon(
-                            painter = painterResource(
-                                R.drawable.ic_logo
-                            ),
+                            painter = painterResource(R.drawable.ic_logo),
                             contentDescription = "IconLogoButton",
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(
-                                    vertical = 20.dp,
-                                    horizontal = 40.dp
-                                ),
+                                .padding(vertical = 20.dp, horizontal = 40.dp),
                             tint = Color.White
                         )
                     }
@@ -551,72 +506,39 @@ fun ButtonConnect(
 }
 
 @Composable
-fun TimeAndStatus(
-    state: ConnectionState,
-    elapsedTime: String
-) {
+fun TimeAndStatus(state: ConnectionState, elapsedTime: String) {
+
     val statusText = when (state) {
-        ConnectionState.Connected ->
-            "شما متصل هستید"
-
-        ConnectionState.Connecting ->
-            "در حال اتصال"
-
-        ConnectionState.Disconnected ->
-            "شما متصل نیستید"
-
-        is ConnectionState.Error ->
-            "خطا در اتصال"
+        ConnectionState.Connected -> "شما متصل هستید"
+        ConnectionState.Connecting -> "در حال اتصال"
+        ConnectionState.Disconnected -> "شما متصل نیستید"
+        is ConnectionState.Error -> "خطا در اتصال"
     }
 
     val timeText = when (state) {
-        ConnectionState.Connected ->
-            elapsedTime
-
-        else ->
-            "00:00:00"
+        ConnectionState.Connected -> elapsedTime
+        else -> "00:00:00"
     }
 
     val statusIcon = when (state) {
-        ConnectionState.Connected ->
-            R.drawable.ic_connected
-
-        ConnectionState.Connecting ->
-            R.drawable.ic_connecting
-
-        ConnectionState.Disconnected ->
-            R.drawable.ic_disconnect
-
-        is ConnectionState.Error ->
-            R.drawable.ic_disconnect
+        ConnectionState.Connected -> R.drawable.ic_connected
+        ConnectionState.Connecting -> R.drawable.ic_connecting
+        ConnectionState.Disconnected -> R.drawable.ic_disconnect
+        is ConnectionState.Error -> R.drawable.ic_disconnect
     }
 
     val bgCardColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.bgStatusDisconnect
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.bgStatusDisconnect
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.bgStatusConnecting
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.bgStatusConnected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.bgStatusDisconnect
+        is ConnectionState.Error -> MaterialTheme.fullColors.bgStatusDisconnect
+        ConnectionState.Connecting -> MaterialTheme.fullColors.bgStatusConnecting
+        ConnectionState.Connected -> MaterialTheme.fullColors.bgStatusConnected  // همانطور که در کد شما بود
     }
 
     val statusTextColor = when (state) {
-        ConnectionState.Disconnected ->
-            MaterialTheme.fullColors.textStatusDisconnect
-
-        is ConnectionState.Error ->
-            MaterialTheme.fullColors.textStatusDisconnect
-
-        ConnectionState.Connecting ->
-            MaterialTheme.fullColors.textStatusConnecting
-
-        ConnectionState.Connected ->
-            MaterialTheme.fullColors.textStatusConnected
+        ConnectionState.Disconnected -> MaterialTheme.fullColors.textStatusDisconnect
+        is ConnectionState.Error -> MaterialTheme.fullColors.textStatusDisconnect
+        ConnectionState.Connecting -> MaterialTheme.fullColors.textStatusConnecting
+        ConnectionState.Connected -> MaterialTheme.fullColors.textStatusConnected  // همانطور که در کد شما بود
     }
 
     Text(
@@ -624,9 +546,7 @@ fun TimeAndStatus(
         modifier = Modifier,
         color = MaterialTheme.fullColors.timeText,
         style = MaterialTheme.typography.headlineLarge,
-        fontFamily = FontFamily(
-            Font(R.font.yekanbakh_bold)
-        )
+        fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
     )
 
     Spacer(
@@ -636,15 +556,11 @@ fun TimeAndStatus(
     Card(
         modifier = Modifier,
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = bgCardColor
-        )
+        colors = CardDefaults.cardColors(containerColor = bgCardColor)
     ) {
         Row(
-            modifier = Modifier.padding(
-                horizontal = 15.dp,
-                vertical = 10.dp
-            ),
+            modifier = Modifier
+                .padding(horizontal = 15.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -653,9 +569,7 @@ fun TimeAndStatus(
                 modifier = Modifier,
                 color = statusTextColor,
                 style = MaterialTheme.typography.labelLarge,
-                fontFamily = FontFamily(
-                    Font(R.font.peyda_medium)
-                )
+                fontFamily = FontFamily(Font(R.font.peyda_medium))
             )
 
             Spacer(
@@ -680,19 +594,17 @@ fun HomePreview() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    MaterialTheme.fullColors.background
-                )
+                .background(MaterialTheme.fullColors.background)
         ) {
+            // تصویر بک‌گراند برای Preview
             Image(
-                painter = painterResource(
-                    R.drawable.img_map_dark
-                ),
+                painter = painterResource(R.drawable.img_map_dark),
                 contentDescription = "BgImage",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
 
+            // overlay سایه / gradient اگر می‌خوای
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -708,6 +620,7 @@ fun HomePreview() {
                     )
             )
 
+            // HomeScreen واقعی
             HomeScreen(
                 navController = rememberNavController(),
                 onItemClick = {}

@@ -1,28 +1,30 @@
-/*
 package com.example.fulluikotlin.infrastructure.vpn.adapters
 
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.example.fulluikotlin.data.local.datastore.SplitTunnelDataStore
 import com.example.fulluikotlin.data.local.datastore.UserDataStore
 import com.example.fulluikotlin.domain.model.ProtocolType
 import com.example.fulluikotlin.domain.model.Server
-import de.blinkt.openvpn.VpnProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import sp.openconnect.VpnProfile
-import sp.openconnect.api.GrantPermissionsActivity
-import sp.openconnect.core.OpenConnectManagementThread
-import sp.openconnect.core.OpenVpnService
-import sp.openconnect.core.ProfileManager
-import sp.openconnect.core.VPNConnector
-import sp.openconnect.fragments.FeedbackFragment
-import sp.openconnect.remote.Static
+import kotlinx.coroutines.withTimeoutOrNull
+import net.openconnect_vpn.android.AuthFormHandler
+import net.openconnect_vpn.android.api.GrantPermissionsActivity
+import net.openconnect_vpn.android.core.OpenConnectManagementThread
+import net.openconnect_vpn.android.core.OpenVpnService
+import net.openconnect_vpn.android.core.ProfileManager
+import net.openconnect_vpn.android.core.VPNConnector
 
+/**
+ * Cisco AnyConnect adapter backed by the upstream OpenConnect Android engine.
+ * Credentials are passed from the same IBSng credential store as other protocols.
+ */
 class CiscoAdapter(
     appContext: Context,
     userDataStore: UserDataStore,
@@ -30,85 +32,130 @@ class CiscoAdapter(
 ) : BaseVpnAdapter(appContext, userDataStore, splitTunnelDataStore) {
 
     private var activeServer: Server? = null
-    private var profile: VpnProfile? = null
+    private var profileUuid: String? = null
     private var connector: VPNConnector? = null
+    @Volatile private var everConnected = false
 
     override suspend fun connect(server: Server, protocol: ProtocolType, activity: Activity?) {
-        val act = activity ?: throw IllegalStateException("Cisco/OpenConnect requires an Activity")
-        if (!prepareVpnPermission(act)) return
-        activeServer = server
-        markConnecting()
-
-        val blockedApps = splitTunnelPackages()
+        val host = decryptConfig(server).trim()
+        require(host.isNotBlank()) { "Cisco server address is empty" }
+        val normalizedHost = if (host.startsWith("https://", true) || host.startsWith("http://", true)) {
+            host
+        } else {
+            "https://$host"
+        }
         val (username, password) = resolveCredentials(server)
-        val hostName = decryptConfig(server).replace("\\s".toRegex(), "")
+        require(username.isNotBlank()) { "IBSng username is empty" }
+        require(password.isNotBlank()) { "IBSng password is empty" }
 
-        Static.CiscoUserName = username
-        Static.CiscoPassword = password
+        val act = activity ?: throw IllegalStateException("Cisco/OpenConnect requires an Activity")
+        activeServer = server
+        everConnected = false
+        markConnecting()
+        AuthFormHandler.setTehCredentials(username, password)
         ProfileManager.init(appContext)
-        ProfileManager.setBlockedApplications(blockedApps)
-        FeedbackFragment.recordProfileAdd(appContext)
-        profile = ProfileManager.create(hostName)
+        val profile = ProfileManager.create(normalizedHost)
+        profileUuid = profile.getUUIDString()
+
+        // Avoid leaving an old profile or service behind if a previous attempt was interrupted.
+        runCatching { ProfileManager.setConnectedVpnProfileDisconnected() }
 
         connector = object : VPNConnector(appContext, false) {
             override fun onUpdate(service: OpenVpnService) {
                 when (service.getConnectionState()) {
-                    OpenConnectManagementThread.STATE_CONNECTED -> markConnected(activeServer)
-                    OpenConnectManagementThread.STATE_DISCONNECTED -> markDisconnected()
+                    OpenConnectManagementThread.STATE_CONNECTED -> {
+                        everConnected = true
+                        markConnected(activeServer)
+                    }
+                    OpenConnectManagementThread.STATE_DISCONNECTED -> {
+                        // Binding creates the service before its VPN thread starts. Its initial
+                        // DISCONNECTED state is normal and must not be treated as a failure.
+                        if (everConnected) markDisconnected()
+                    }
                     else -> markConnecting()
                 }
                 if (statsValid) {
                     setTraffic(
-                        downloadBps = 0,
-//                        downloadBps = deltaStats.rxBytes,
-                        uploadBps = 0
-//                        uploadBps = deltaStats.txBytes
+                        downloadBps = deltaStats.rxBytes.coerceAtLeast(0),
+                        uploadBps = deltaStats.txBytes.coerceAtLeast(0)
                     )
                 }
             }
         }
 
         val intent = Intent(appContext, GrantPermissionsActivity::class.java).apply {
-            putExtra(appContext.packageName + GrantPermissionsActivity.EXTRA_UUID, profile?.getUUID()?.toString())
+            putExtra(appContext.packageName + GrantPermissionsActivity.EXTRA_UUID, profile.getUUIDString())
             action = Intent.ACTION_MAIN
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        act.startActivity(intent)
-        startCiscoStateFallbackPolling()
-    }
+        try {
+            act.startActivity(intent)
+        } catch (t: Throwable) {
+            runCatching { connector?.unbind() }
+            connector = null
+            cleanupProfile()
+            AuthFormHandler.setTehCredentials("", "")
+            throw IllegalStateException("Unable to start Cisco VPN service: ${t.message}", t)
+        }
 
-    private fun startCiscoStateFallbackPolling() {
         adapterScope.launch {
-            while (isActive) {
+            // Poll only as a fallback; the OpenConnect service broadcasts state changes too.
+            while (isActive && connectionState.value is com.example.fulluikotlin.domain.model.ConnectionState.Connecting) {
                 val service = connector?.service
-                if (service == null) {
-                    if (isVpnInterfaceUp()) markConnected(activeServer)
-                } else {
+                if (service != null) {
                     when (service.getConnectionState()) {
-                        OpenConnectManagementThread.STATE_CONNECTED -> markConnected(activeServer)
-                        OpenConnectManagementThread.STATE_DISCONNECTED -> markDisconnected()
-                        else -> markConnecting()
+                        OpenConnectManagementThread.STATE_CONNECTED -> {
+                            everConnected = true
+                            markConnected(activeServer)
+                        }
+                        OpenConnectManagementThread.STATE_DISCONNECTED -> {
+                            if (everConnected) markDisconnected()
+                        }
                     }
                 }
-                delay(1000)
+                delay(500)
             }
         }
     }
 
     override suspend fun disconnect() {
         withContext(Dispatchers.IO) {
-            runCatching { connector?.service?.stopVPN() }
+            val service = connector?.service
+            runCatching { service?.stopVPN() }
+            // Let OpenConnect's worker release its TUN descriptor before deleting its profile.
+            if (service != null) {
+                withTimeoutOrNull(3_000L) {
+                    while (service.getConnectionState() != OpenConnectManagementThread.STATE_DISCONNECTED) {
+                        delay(100)
+                    }
+                }
+            }
+            runCatching { connector?.unbind() }
+            connector = null
+            cleanupProfile()
+            AuthFormHandler.setTehCredentials("", "")
+            everConnected = false
+            activeServer = null
+            markDisconnected()
         }
-        runCatching { connector?.unbind() }
-        connector = null
-        profile = null
-        markDisconnected()
+    }
+
+    private fun cleanupProfile() {
+        val uuid = profileUuid
+        profileUuid = null
+        if (uuid != null) {
+            runCatching { ProfileManager.setConnectedVpnProfileDisconnected() }
+            runCatching { ProfileManager.delete(uuid) }
+        }
     }
 
     override fun release() {
+        runCatching { connector?.service?.stopVPN() }
         runCatching { connector?.unbind() }
         connector = null
+        cleanupProfile()
+        AuthFormHandler.setTehCredentials("", "")
+        everConnected = false
         super.release()
     }
 }
-*/

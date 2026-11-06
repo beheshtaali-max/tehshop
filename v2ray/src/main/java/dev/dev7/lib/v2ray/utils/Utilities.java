@@ -8,7 +8,6 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 
 import dev.dev7.lib.v2ray.core.SingBoxConfigBuilder;
-import dev.dev7.lib.v2ray.core.XraySidecar;
 import dev.dev7.lib.v2ray.model.V2rayConfigModel;
 
 import static dev.dev7.lib.v2ray.utils.V2rayConfigs.currentConfig;
@@ -22,10 +21,8 @@ public class Utilities {
             model.remark = remark == null || remark.trim().isEmpty() ? "sing-box" : remark;
             model.blockedApplications = blockedApplications;
             model.rawInputConfig = config;
-            model.protocolMode = XraySidecar.isXhttp(config) ? "xhttp" : SingBoxConfigBuilder.detectProtocol(config);
-            model.fullJsonConfig = XraySidecar.isXhttp(config)
-                    ? SingBoxConfigBuilder.buildXhttpBridgeConfig(XraySidecar.socksPort())
-                    : SingBoxConfigBuilder.buildAutoConfig(config);
+            model.protocolMode = SingBoxConfigBuilder.detectProtocol(config);
+            model.fullJsonConfig = SingBoxConfigBuilder.buildAutoConfig(config);
             SingBoxConfigBuilder.Endpoint endpoint = SingBoxConfigBuilder.extractEndpoint(config);
             model.currentServerAddress = endpoint.host == null ? "" : endpoint.host;
             model.currentServerPort = endpoint.port;

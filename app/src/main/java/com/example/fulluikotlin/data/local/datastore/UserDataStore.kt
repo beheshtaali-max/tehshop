@@ -1,8 +1,12 @@
 package com.example.fulluikotlin.data.local.datastore
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.fulluikotlin.domain.model.User
@@ -11,9 +15,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
-private val Context.userDataStore by preferencesDataStore(name = "user_prefs")
+private val Context.userDataStore by preferencesDataStore(
+    name = "user_prefs",
+    corruptionHandler = ReplaceFileCorruptionHandler<Preferences> {
+        // A corrupted preferences file used to leave the app stuck until Clear Data.
+        // Recover with an empty store so the user can reach Login again.
+        emptyPreferences()
+    }
+)
 
 class UserDataStore(private val context: Context) {
+
+    data class AutoLoginCredentials(
+        val username: String,
+        val password: String,
+        val device: String
+    )
 
     private val IS_LOGGED_IN_KEY = booleanPreferencesKey("is_logged_in")
     private val USER_ID_KEY = stringPreferencesKey("user_id")
@@ -55,37 +72,70 @@ class UserDataStore(private val context: Context) {
             val remainDevice = prefs[REMAIN_DEVICE_KEY] ?: ""
             val isExpired = prefs[IS_EXPIRED_KEY] ?: true
             User(
-                id,
-                username,
-                device,
-                devices,
-                creationDate,
-                expDate,
-                totalTraffic,
-                remainTraffic,
-                groupName,
-                remainDays as Float,
-                remainDevice,
-                isExpired
+                id = id,
+                username = username,
+                device = device,
+                devices = devices,
+                creationDate = creationDate,
+                expDate = expDate,
+                totalTraffic = totalTraffic,
+                remainTraffic = remainTraffic,
+                groupName = groupName,
+                remainDays = remainDays,
+                remainDevice = remainDevice,
+                isExpired = isExpired
             )
         }
 
-    suspend fun saveUser(user: User) {
-        context.userDataStore.edit {
-            it[IS_LOGGED_IN_KEY] = true
-            it[USER_ID_KEY] = user.id
-            it[USERNAME_KEY] = user.username
-            it[DEVICE_KEY] = user.device
-            it[DEVICES_LIST_KEY] = user.devices ?: ""
-            it[CREATION_DATE_KEY] = user.creationDate
-            it[EXP_DATE_KEY] = user.expDate
-            it[TOTAL_TRAFICK_KEY] = user.totalTraffic
-            it[REMAIN_TRAFICK_KEY] = user.remainTraffic
-            it[GROUP_NAME_KEY] = user.groupName
-            it[REMAIN_DAYS_KEY] = user.remainDays.toString()
-            it[REMAIN_DEVICE_KEY] = user.remainDevice
-            it[IS_EXPIRED_KEY] = user.isExpired
+    /**
+     * Persists the whole authenticated session in a single DataStore transaction.
+     * This prevents `is_logged_in=true` from being saved without the credentials
+     * needed by Splash for the next automatic login.
+     */
+    suspend fun saveAuthenticatedSession(user: User, password: String) {
+        val devicesList = user.devices
+            ?.split("&&")
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+        val devicesJson = Json.encodeToString(devicesList)
+
+        context.userDataStore.edit { prefs ->
+            writeUser(prefs, user)
+            prefs[IS_LOGGED_IN_KEY] = true
+
+            prefs[MULTI_LOGIN_DEVICES_KEY] = devicesJson
+            prefs[MULTI_LOGIN_USERNAME_KEY] = user.username
+            prefs[MULTI_LOGIN_PASSWORD_KEY] = password
+            prefs[MULTI_LOGIN_DEVICE_KEY] = user.device
+
+            // Saved credentials are also used as a migration fallback for users
+            // coming from versions where multi-login keys may not exist.
+            prefs[SAVED_USERNAME_KEY] = user.username
+            prefs[SAVED_PASSWORD_KEY] = password
         }
+    }
+
+    /** Updates user/account values while preserving the already saved credentials. */
+    suspend fun saveUser(user: User) {
+        context.userDataStore.edit { prefs ->
+            writeUser(prefs, user)
+            prefs[IS_LOGGED_IN_KEY] = true
+        }
+    }
+
+    private fun writeUser(prefs: MutablePreferences, user: User) {
+        prefs[USER_ID_KEY] = user.id
+        prefs[USERNAME_KEY] = user.username
+        prefs[DEVICE_KEY] = user.device
+        prefs[DEVICES_LIST_KEY] = user.devices ?: ""
+        prefs[CREATION_DATE_KEY] = user.creationDate
+        prefs[EXP_DATE_KEY] = user.expDate
+        prefs[TOTAL_TRAFICK_KEY] = user.totalTraffic
+        prefs[REMAIN_TRAFICK_KEY] = user.remainTraffic
+        prefs[GROUP_NAME_KEY] = user.groupName
+        prefs[REMAIN_DAYS_KEY] = user.remainDays.toString()
+        prefs[REMAIN_DEVICE_KEY] = user.remainDevice
+        prefs[IS_EXPIRED_KEY] = user.isExpired
     }
 
     suspend fun saveSavedCredentials(username: String, password: String) {
@@ -98,6 +148,31 @@ class UserDataStore(private val context: Context) {
     suspend fun getSavedCredentials(): Pair<String?, String?> {
         val prefs = context.userDataStore.data.first()
         return prefs[SAVED_USERNAME_KEY] to prefs[SAVED_PASSWORD_KEY]
+    }
+
+    /**
+     * Reads a complete credential set for automatic login.
+     * Prefer the current multi-login keys, then fall back to the saved username/password
+     * plus the device stored in the authenticated user record.
+     */
+    suspend fun getAutoLoginCredentials(): AutoLoginCredentials? {
+        val prefs = context.userDataStore.data.first()
+
+        val multiUsername = prefs[MULTI_LOGIN_USERNAME_KEY]
+        val multiPassword = prefs[MULTI_LOGIN_PASSWORD_KEY]
+        val multiDevice = prefs[MULTI_LOGIN_DEVICE_KEY]
+        if (!multiUsername.isNullOrBlank() && !multiPassword.isNullOrBlank() && !multiDevice.isNullOrBlank()) {
+            return AutoLoginCredentials(multiUsername, multiPassword, multiDevice)
+        }
+
+        val savedUsername = prefs[SAVED_USERNAME_KEY]
+        val savedPassword = prefs[SAVED_PASSWORD_KEY]
+        val savedDevice = prefs[DEVICE_KEY]
+        if (!savedUsername.isNullOrBlank() && !savedPassword.isNullOrBlank() && !savedDevice.isNullOrBlank()) {
+            return AutoLoginCredentials(savedUsername, savedPassword, savedDevice)
+        }
+
+        return null
     }
 
     suspend fun logout() {
@@ -119,27 +194,26 @@ class UserDataStore(private val context: Context) {
             prefs.remove(MULTI_LOGIN_USERNAME_KEY)
             prefs.remove(MULTI_LOGIN_PASSWORD_KEY)
             prefs.remove(MULTI_LOGIN_DEVICE_KEY)
-
+            // Keep SAVED_USERNAME/PASSWORD so Login can be pre-filled after logout.
         }
     }
-
 
     suspend fun saveMultiLoginDevices(devices: List<String>) {
         val json = Json.encodeToString(devices)
         context.userDataStore.edit { it[MULTI_LOGIN_DEVICES_KEY] = json }
     }
 
-
     suspend fun getMultiLoginDevices(): List<String>? {
-        val json = context.userDataStore.data.first()[MULTI_LOGIN_DEVICES_KEY]
-        return if (json != null) Json.decodeFromString(json) else null
+        val json = context.userDataStore.data.first()[MULTI_LOGIN_DEVICES_KEY] ?: return null
+        return runCatching { Json.decodeFromString<List<String>>(json) }
+            .getOrDefault(emptyList())
     }
 
     val multiLoginDevicesFlow: Flow<List<String>> = context.userDataStore.data
         .map { prefs ->
             val json = prefs[MULTI_LOGIN_DEVICES_KEY]
             if (json != null) {
-                Json.decodeFromString<List<String>>(json)
+                runCatching { Json.decodeFromString<List<String>>(json) }.getOrDefault(emptyList())
             } else {
                 emptyList()
             }
@@ -174,5 +248,4 @@ class UserDataStore(private val context: Context) {
     suspend fun updateMultiLoginDevices(updatedDevices: List<String>) {
         saveMultiLoginDevices(updatedDevices)
     }
-
 }

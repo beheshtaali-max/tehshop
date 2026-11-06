@@ -32,19 +32,30 @@ import android.net.Network;
 import android.net.TrafficStats;
 import android.net.VpnService;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 
+import java.net.ServerSocket;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import dev.dev7.lib.v2ray.core.SingBoxConfigBuilder;
 import dev.dev7.lib.v2ray.core.SingBoxCoreBridge;
-import dev.dev7.lib.v2ray.core.XraySidecar;
 import dev.dev7.lib.v2ray.core.SingBoxLatencyTester;
+import dev.dev7.lib.v2ray.core.SmartDelayRequestStore;
 import dev.dev7.lib.v2ray.interfaces.NotificationProvider;
 import dev.dev7.lib.v2ray.interfaces.V2rayServicesListener;
+import dev.dev7.lib.v2ray.model.RealDelayTestConfig;
 import dev.dev7.lib.v2ray.model.V2rayConfigModel;
 import dev.dev7.lib.v2ray.utils.SafeLog;
 import dev.dev7.lib.v2ray.utils.V2rayConfigs;
@@ -83,6 +94,8 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     private static final String STATE_CONNECTING = "CONNECTING";
     private static final String STATE_CONNECTED = "CONNECTED";
     private static final String STATE_DISCONNECTED = "DISCONNECTED";
+    private static final String SMART_DELAY_TEST_URL = "https://www.google.com/generate_204";
+    private static final int SMART_DELAY_TIMEOUT_MS = 9000;
 
     private volatile long sessionDownloadTotal = 0L;
     private volatile long sessionUploadTotal = 0L;
@@ -95,7 +108,12 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     private Thread workerThread;
     private ParcelFileDescriptor tunFd;
     private SingBoxCoreBridge coreBridge;
-    private boolean xhttpSidecarRunning = false;
+    private volatile boolean smartDelayTestRunning = false;
+    private volatile String activeSmartDelayRequestId = null;
+    private Thread smartDelayWorkerThread;
+    private ExecutorService smartDelayExecutor;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable smartDelayIdleStopRunnable = () -> stopSelf();
     private V2rayConfigModel currentConfig = new V2rayConfigModel();
     private long connectedAt = 0L;
     private static NotificationProvider customNotificationProvider = null;
@@ -118,6 +136,9 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
                     case MEASURE_DELAY:
                         broadcastCurrentDelay();
                         break;
+                    case CANCEL_SMART_DELAY_TEST:
+                        cancelSmartDelayTest(intent.getStringExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA));
+                        break;
                     default:
                         break;
                 }
@@ -130,10 +151,7 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     @Override
     public void onCreate() {
         super.onCreate();
-        SafeLog.init(this);
         SafeLog.i(TAG, "onCreate package=" + getPackageName() + " pid=" + android.os.Process.myPid());
-        V2rayConfigs.connectionState = V2rayConstants.CONNECTION_STATES.CONNECTING;
-
         /*
          * Do not keep a library notification.
          *
@@ -162,13 +180,26 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         SafeLog.i(TAG, "onStartCommand flags=" + flags + " startId=" + startId + " running=" + running + " intent=" + intent);
+        cancelPendingSmartDelayIdleStop();
         if (intent == null) return START_NOT_STICKY;
         V2rayConstants.SERVICE_COMMANDS command = (V2rayConstants.SERVICE_COMMANDS) intent.getSerializableExtra(V2RAY_SERVICE_COMMAND_EXTRA);
         if (command == V2rayConstants.SERVICE_COMMANDS.STOP_SERVICE) {
             stopService();
             return START_NOT_STICKY;
         }
+        if (command == V2rayConstants.SERVICE_COMMANDS.START_SMART_DELAY_TEST) {
+            startSmartDelayTest(intent.getStringExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA));
+            return START_NOT_STICKY;
+        }
+        if (command == V2rayConstants.SERVICE_COMMANDS.CANCEL_SMART_DELAY_TEST) {
+            cancelSmartDelayTest(intent.getStringExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA));
+            return START_NOT_STICKY;
+        }
         if (command != V2rayConstants.SERVICE_COMMANDS.START_SERVICE) return START_STICKY;
+        if (smartDelayTestRunning) {
+            SafeLog.w(TAG, "VPN start ignored until smart delay test cleanup finishes");
+            return START_STICKY;
+        }
 
         V2rayConfigModel config = (V2rayConfigModel) intent.getSerializableExtra(V2RAY_SERVICE_CONFIG_EXTRA);
         if (config == null || config.fullJsonConfig == null || config.fullJsonConfig.trim().isEmpty()) {
@@ -178,8 +209,241 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
         }
         currentConfig = config;
         V2rayConfigs.currentConfig = config;
+        if (!foregroundStarted) {
+            prepareForegroundWithoutPersistentNotification("Starting VPN...");
+        }
         startCore(config);
         return START_STICKY;
+    }
+
+    private void startSmartDelayTest(String requestId) {
+        if (requestId == null || requestId.trim().isEmpty()) {
+            broadcastSmartDelayError("", "Missing smart-delay request id");
+            stopForegroundCompat();
+            stopSelf();
+            return;
+        }
+        if (running || smartDelayTestRunning) {
+            broadcastSmartDelayError(requestId, "VPN core is busy");
+            return;
+        }
+
+        SmartDelayRequestStore.Request request = SmartDelayRequestStore.get(requestId);
+        if (request == null || request.configs.isEmpty()) {
+            broadcastSmartDelayError(requestId, "No V2Ray configs were supplied");
+            SmartDelayRequestStore.remove(requestId);
+            stopForegroundCompat();
+            stopSelf();
+            return;
+        }
+
+        smartDelayTestRunning = true;
+        activeSmartDelayRequestId = requestId;
+        startSmartDelayForeground("Finding the fastest server...");
+
+        smartDelayWorkerThread = new Thread(() -> {
+            String terminalEvent = V2rayConstants.SMART_DELAY_EVENT_ERROR;
+            String terminalError = "No server returned a valid delay";
+            String bestServerId = "";
+            long bestDelay = -1L;
+            try {
+                List<Integer> ports = allocateLocalPorts(request.configs.size());
+                String testConfig = SingBoxConfigBuilder.buildParallelDelayTestConfig(request.configs, ports);
+
+                coreBridge = new SingBoxCoreBridge(this);
+                coreBridge.init();
+                coreBridge.start(testConfig);
+                // Give all local SOCKS listeners a short moment to bind before concurrent requests.
+                Thread.sleep(350L);
+
+                int total = request.configs.size();
+                int concurrency = Math.max(1, Math.min(request.maxConcurrency, total));
+                smartDelayExecutor = Executors.newFixedThreadPool(concurrency);
+                ExecutorCompletionService<SmartDelayResult> completion =
+                        new ExecutorCompletionService<>(smartDelayExecutor);
+
+                for (int i = 0; i < total; i++) {
+                    final RealDelayTestConfig item = request.configs.get(i);
+                    final int port = ports.get(i);
+                    completion.submit(() -> {
+                        if (request.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                            return new SmartDelayResult(item.serverId, -1L);
+                        }
+                        long delay = SingBoxLatencyTester.measureHttpDelayThroughSocks(
+                                "127.0.0.1",
+                                port,
+                                SMART_DELAY_TEST_URL,
+                                SMART_DELAY_TIMEOUT_MS
+                        );
+                        return new SmartDelayResult(item.serverId, delay);
+                    });
+                }
+
+                int completed = 0;
+                while (completed < total && !request.cancelled.get()) {
+                    Future<SmartDelayResult> future = completion.poll(250L, TimeUnit.MILLISECONDS);
+                    if (future == null) continue;
+                    SmartDelayResult result;
+                    try {
+                        result = future.get();
+                    } catch (Throwable ignored) {
+                        result = new SmartDelayResult("", -1L);
+                    }
+                    completed++;
+                    if (result.delayMs > 0 && (bestDelay <= 0 || result.delayMs < bestDelay)) {
+                        bestDelay = result.delayMs;
+                        bestServerId = result.serverId;
+                    }
+                    broadcastSmartDelayProgress(
+                            requestId,
+                            completed,
+                            total,
+                            result.serverId,
+                            result.delayMs,
+                            bestServerId,
+                            bestDelay
+                    );
+                }
+
+                if (request.cancelled.get()) {
+                    terminalEvent = V2rayConstants.SMART_DELAY_EVENT_CANCELLED;
+                    terminalError = "";
+                } else if (!bestServerId.isEmpty() && bestDelay > 0) {
+                    terminalEvent = V2rayConstants.SMART_DELAY_EVENT_COMPLETED;
+                    terminalError = "";
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                terminalEvent = V2rayConstants.SMART_DELAY_EVENT_CANCELLED;
+                terminalError = "";
+            } catch (Throwable t) {
+                SafeLog.e(TAG, "Smart real-delay test failed", t);
+                terminalError = t.getMessage() == null ? "Real delay test failed" : t.getMessage();
+            } finally {
+                ExecutorService executor = smartDelayExecutor;
+                smartDelayExecutor = null;
+                if (executor != null) executor.shutdownNow();
+                try {
+                    if (coreBridge != null) coreBridge.stop();
+                } catch (Throwable t) {
+                    SafeLog.w(TAG, "Smart delay core stop failed", t);
+                }
+                coreBridge = null;
+                smartDelayTestRunning = false;
+                activeSmartDelayRequestId = null;
+                SmartDelayRequestStore.remove(requestId);
+
+                // Send the terminal event only after the test core is fully stopped so the host app
+                // can immediately start the selected VPN config without racing this instance.
+                if (V2rayConstants.SMART_DELAY_EVENT_COMPLETED.equals(terminalEvent)) {
+                    broadcastSmartDelayCompleted(requestId, bestServerId, bestDelay);
+                } else if (V2rayConstants.SMART_DELAY_EVENT_CANCELLED.equals(terminalEvent)) {
+                    broadcastSmartDelayCancelled(requestId);
+                } else {
+                    broadcastSmartDelayError(requestId, terminalError);
+                }
+                stopForegroundCompat();
+                scheduleSmartDelayIdleStop();
+            }
+        }, "singbox-smart-delay-worker");
+        smartDelayWorkerThread.setUncaughtExceptionHandler((thread, error) ->
+                SafeLog.e(TAG, "Uncaught smart-delay worker exception", error));
+        smartDelayWorkerThread.start();
+    }
+
+    private void scheduleSmartDelayIdleStop() {
+        mainHandler.removeCallbacks(smartDelayIdleStopRunnable);
+        mainHandler.postDelayed(smartDelayIdleStopRunnable, 1500L);
+    }
+
+    private void cancelPendingSmartDelayIdleStop() {
+        mainHandler.removeCallbacks(smartDelayIdleStopRunnable);
+    }
+
+    private void cancelSmartDelayTest(String requestId) {
+        String activeId = activeSmartDelayRequestId;
+        if (activeId == null) return;
+        if (requestId != null && !requestId.isEmpty() && !activeId.equals(requestId)) return;
+
+        SmartDelayRequestStore.cancel(activeId);
+        ExecutorService executor = smartDelayExecutor;
+        if (executor != null) executor.shutdownNow();
+        Thread worker = smartDelayWorkerThread;
+        if (worker != null) worker.interrupt();
+        try {
+            if (coreBridge != null) coreBridge.stop();
+        } catch (Throwable t) {
+            SafeLog.w(TAG, "cancelSmartDelayTest core stop failed", t);
+        }
+    }
+
+    private List<Integer> allocateLocalPorts(int count) throws Exception {
+        ArrayList<Integer> ports = new ArrayList<>();
+        ArrayList<ServerSocket> reservations = new ArrayList<>();
+        try {
+            for (int i = 0; i < count; i++) {
+                ServerSocket socket = new ServerSocket(0);
+                socket.setReuseAddress(true);
+                reservations.add(socket);
+                ports.add(socket.getLocalPort());
+            }
+            return ports;
+        } finally {
+            for (ServerSocket socket : reservations) {
+                try { socket.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private void broadcastSmartDelayProgress(
+            String requestId,
+            int completed,
+            int total,
+            String testedServerId,
+            long testedDelay,
+            String bestServerId,
+            long bestDelay
+    ) {
+        Intent intent = baseSmartDelayIntent(requestId, V2rayConstants.SMART_DELAY_EVENT_PROGRESS)
+                .putExtra(V2rayConstants.SMART_DELAY_COMPLETED_EXTRA, completed)
+                .putExtra(V2rayConstants.SMART_DELAY_TOTAL_EXTRA, total)
+                .putExtra(V2rayConstants.SMART_DELAY_TESTED_SERVER_ID_EXTRA, testedServerId)
+                .putExtra(V2rayConstants.SMART_DELAY_TESTED_VALUE_EXTRA, testedDelay)
+                .putExtra(V2rayConstants.SMART_DELAY_BEST_SERVER_ID_EXTRA, bestServerId)
+                .putExtra(V2rayConstants.SMART_DELAY_BEST_VALUE_EXTRA, bestDelay);
+        sendBroadcast(intent);
+    }
+
+    private void broadcastSmartDelayCompleted(String requestId, String bestServerId, long bestDelay) {
+        sendBroadcast(baseSmartDelayIntent(requestId, V2rayConstants.SMART_DELAY_EVENT_COMPLETED)
+                .putExtra(V2rayConstants.SMART_DELAY_BEST_SERVER_ID_EXTRA, bestServerId)
+                .putExtra(V2rayConstants.SMART_DELAY_BEST_VALUE_EXTRA, bestDelay));
+    }
+
+    private void broadcastSmartDelayCancelled(String requestId) {
+        sendBroadcast(baseSmartDelayIntent(requestId, V2rayConstants.SMART_DELAY_EVENT_CANCELLED));
+    }
+
+    private void broadcastSmartDelayError(String requestId, String error) {
+        sendBroadcast(baseSmartDelayIntent(requestId, V2rayConstants.SMART_DELAY_EVENT_ERROR)
+                .putExtra(V2rayConstants.SMART_DELAY_ERROR_EXTRA, error == null ? "" : error));
+    }
+
+    private Intent baseSmartDelayIntent(String requestId, String event) {
+        return new Intent(V2rayConstants.SMART_DELAY_TEST_BROADCAST_INTENT)
+                .setPackage(getPackageName())
+                .putExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA, requestId == null ? "" : requestId)
+                .putExtra(V2rayConstants.SMART_DELAY_EVENT_EXTRA, event);
+    }
+
+    private static final class SmartDelayResult {
+        final String serverId;
+        final long delayMs;
+
+        SmartDelayResult(String serverId, long delayMs) {
+            this.serverId = serverId == null ? "" : serverId;
+            this.delayMs = delayMs;
+        }
     }
 
     private void startCore(V2rayConfigModel config) {
@@ -199,12 +463,6 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
             try {
                 SafeLog.i(TAG, "Worker started protocol=" + config.protocolMode + " endpoint=" + config.currentServerAddress + ":" + config.currentServerPort);
                 SafeLog.d(TAG, "sing-box config:\n" + config.fullJsonConfig);
-
-                if (XraySidecar.isXhttp(config.rawInputConfig)) {
-                    SafeLog.i(TAG, "XHTTP detected; starting Xray sidecar");
-                    XraySidecar.start(this, config.rawInputConfig);
-                    xhttpSidecarRunning = true;
-                }
 
                 coreBridge = new SingBoxCoreBridge(this);
                 coreBridge.init();
@@ -521,10 +779,6 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
             SafeLog.w(TAG, "tun close failed", t);
         }
         tunFd = null;
-        if (xhttpSidecarRunning) {
-            try { XraySidecar.stop(); } catch (Throwable t) { SafeLog.w(TAG, "Xray sidecar stop failed", t); }
-            xhttpSidecarRunning = false;
-        }
         connectedAt = 0L;
         stopTrafficMonitoring();
         SafeLog.i(TAG, "cleanup end");
@@ -554,6 +808,16 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopPending)
                 .setOngoing(true)
                 .build();
+    }
+
+    private void startSmartDelayForeground(String text) {
+        try {
+            createChannelIfNeeded();
+            startForeground(NOTIFICATION_ID, createNotification(text));
+            foregroundStarted = true;
+        } catch (Throwable t) {
+            SafeLog.w(TAG, "startSmartDelayForeground failed", t);
+        }
     }
 
     private void updateNotification(String text) {
@@ -708,6 +972,8 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     @Override
     public void onDestroy() {
         SafeLog.i(TAG, "onDestroy");
+        cancelPendingSmartDelayIdleStop();
+        if (smartDelayTestRunning) cancelSmartDelayTest(activeSmartDelayRequestId);
         try {
             if (receiverRegistered) unregisterReceiver(serviceCommandBroadcastReceiver);
         } catch (Throwable ignored) {}
@@ -728,6 +994,7 @@ public class V2rayVPNService extends VpnService implements V2rayServicesListener
     @Override
     public void stopService() {
         SafeLog.i(TAG, "stopService called");
+        if (smartDelayTestRunning) cancelSmartDelayTest(activeSmartDelayRequestId);
         synchronized (lock) { running = false; }
         cleanup();
         V2rayConfigs.connectionState = V2rayConstants.CONNECTION_STATES.DISCONNECTED;

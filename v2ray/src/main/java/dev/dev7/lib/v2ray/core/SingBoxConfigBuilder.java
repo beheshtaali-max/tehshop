@@ -12,6 +12,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -20,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import dev.dev7.lib.v2ray.model.RealDelayTestConfig;
 import dev.dev7.lib.v2ray.utils.SafeLog;
 
 public final class SingBoxConfigBuilder {
@@ -153,23 +155,6 @@ public final class SingBoxConfigBuilder {
         proxy.put("password", nullToEmpty(password));
         proxy.put("client_version", "SSH-2.0-OpenSSH_8.9");
         return wrapProxyOutbound(proxy);
-    }
-
-    /** Build the TUN side of the XHTTP bridge. Xray itself runs as a local SOCKS sidecar. */
-    public static String buildXhttpBridgeConfig(int socksPort) throws Exception {
-        JSONObject root = baseConfigSkeleton();
-        JSONArray outbounds = new JSONArray();
-        JSONObject proxy = new JSONObject();
-        proxy.put("type", "socks");
-        proxy.put("tag", "proxy");
-        proxy.put("server", "127.0.0.1");
-        proxy.put("server_port", socksPort);
-        proxy.put("version", "5");
-        outbounds.put(proxy);
-        outbounds.put(new JSONObject().put("type", "direct").put("tag", "direct"));
-        outbounds.put(new JSONObject().put("type", "block").put("tag", "block"));
-        root.put("outbounds", outbounds);
-        return root.toString(2);
     }
 
     public static String buildV2RayConfig(String input) throws Exception {
@@ -520,8 +505,7 @@ public final class SingBoxConfigBuilder {
     private static void addTransportFromQuery(JSONObject out, Map<String, String> q) throws Exception {
         String type = lower(firstNonEmpty(q.get("type"), q.get("net"), q.get("network")));
         if (!notEmpty(type) || "tcp".equals(type)) return;
-        // XHTTP is handled by the Xray sidecar path. Never silently downgrade it to HTTP.
-        if ("xhttp".equals(type)) throw new IllegalArgumentException("XHTTP must be handled by Xray sidecar");
+        if ("xhttp".equals(type)) type = "http";
         if ("h2".equals(type)) type = "http";
 
         JSONObject tr = new JSONObject();
@@ -562,6 +546,140 @@ public final class SingBoxConfigBuilder {
     private static int defaultPort(Map<String, String> q) {
         String security = lower(q.get("security"));
         return ("tls".equals(security) || "reality".equals(security)) ? 443 : 80;
+    }
+
+    /**
+     * Builds one lightweight sing-box instance with a dedicated local SOCKS inbound for each
+     * outbound. The host app can then issue real HTTP requests through those ports concurrently.
+     * This avoids creating multiple VPN/TUN interfaces while still exercising every full config.
+     */
+    public static String buildParallelDelayTestConfig(
+            List<RealDelayTestConfig> configs,
+            List<Integer> localSocksPorts
+    ) throws Exception {
+        if (configs == null || configs.isEmpty()) {
+            throw new IllegalArgumentException("No configs supplied for real delay test");
+        }
+        if (localSocksPorts == null || localSocksPorts.size() != configs.size()) {
+            throw new IllegalArgumentException("SOCKS port count must match config count");
+        }
+
+        JSONObject root = new JSONObject();
+        root.put("log", new JSONObject().put("level", "warn").put("timestamp", true));
+
+        JSONObject dns = new JSONObject();
+        dns.put("servers", new JSONArray().put(
+                new JSONObject().put("tag", "local").put("address", "local")
+        ));
+        dns.put("final", "local");
+        dns.put("strategy", "ipv4_only");
+        root.put("dns", dns);
+
+        JSONArray inbounds = new JSONArray();
+        JSONArray outbounds = new JSONArray();
+        JSONArray rules = new JSONArray();
+
+        // Parsing and endpoint bootstrap DNS are intentionally parallel. With a large location
+        // list, doing up to several-second DNS resolution sequentially would make the dialog look
+        // stuck before the first progress event.
+        int builderConcurrency = Math.max(1, Math.min(8, configs.size()));
+        ExecutorService builderExecutor = Executors.newFixedThreadPool(builderConcurrency);
+        List<Future<JSONObject>> outboundFutures = new java.util.ArrayList<>();
+        try {
+            for (int i = 0; i < configs.size(); i++) {
+                final int index = i;
+                final RealDelayTestConfig item = configs.get(i);
+                outboundFutures.add(builderExecutor.submit(() -> {
+                    String outboundTag = "delay-out-" + index;
+                    try {
+                        JSONObject outbound = extractPrimaryProxyOutbound(item == null ? "" : item.config);
+                        outbound.put("tag", outboundTag);
+                        prepareProxyOutbound(outbound);
+                        return outbound;
+                    } catch (Throwable t) {
+                        // One malformed config must not abort the whole batch. Routing that SOCKS
+                        // inbound to a block outbound makes its HTTP test return -1 quickly.
+                        SafeLog.w("SingBoxConfigBuilder", "Skipping invalid smart-delay config index=" + index, t);
+                        return new JSONObject().put("type", "block").put("tag", outboundTag);
+                    }
+                }));
+            }
+
+            for (int i = 0; i < configs.size(); i++) {
+                int port = localSocksPorts.get(i) == null ? 0 : localSocksPorts.get(i);
+                if (port <= 0 || port > 65535) {
+                    throw new IllegalArgumentException("Invalid local SOCKS port at index " + i);
+                }
+
+                String inboundTag = "delay-in-" + i;
+                String outboundTag = "delay-out-" + i;
+
+                JSONObject inbound = new JSONObject();
+                inbound.put("type", "socks");
+                inbound.put("tag", inboundTag);
+                inbound.put("listen", "127.0.0.1");
+                inbound.put("listen_port", port);
+                inbounds.put(inbound);
+
+                JSONObject outbound;
+                try {
+                    outbound = outboundFutures.get(i).get();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw interrupted;
+                } catch (Throwable t) {
+                    SafeLog.w("SingBoxConfigBuilder", "Smart-delay outbound build failed index=" + i, t);
+                    outbound = new JSONObject().put("type", "block").put("tag", outboundTag);
+                }
+                outbounds.put(outbound);
+
+                JSONObject rule = new JSONObject();
+                rule.put("inbound", new JSONArray().put(inboundTag));
+                // Omitting action keeps compatibility with older embedded sing-box builds;
+                // route is the default action and outbound selects the target tag.
+                rule.put("outbound", outboundTag);
+                rules.put(rule);
+            }
+        } finally {
+            builderExecutor.shutdownNow();
+        }
+
+        outbounds.put(new JSONObject().put("type", "direct").put("tag", "direct"));
+        outbounds.put(new JSONObject().put("type", "block").put("tag", "block"));
+
+        JSONObject route = new JSONObject();
+        route.put("auto_detect_interface", true);
+        route.put("rules", rules);
+        route.put("final", "direct");
+
+        root.put("inbounds", inbounds);
+        root.put("outbounds", outbounds);
+        root.put("route", route);
+        return root.toString(2);
+    }
+
+    private static JSONObject extractPrimaryProxyOutbound(String input) throws Exception {
+        String fullConfig = buildAutoConfig(input);
+        JSONObject root = new JSONObject(fullConfig);
+        JSONArray outbounds = root.optJSONArray("outbounds");
+        if (outbounds == null || outbounds.length() == 0) {
+            throw new IllegalArgumentException("Config has no outbound");
+        }
+
+        for (int i = 0; i < outbounds.length(); i++) {
+            JSONObject candidate = outbounds.optJSONObject(i);
+            if (candidate == null) continue;
+            String type = lower(candidate.optString("type", candidate.optString("protocol", "")));
+            String tag = lower(candidate.optString("tag", ""));
+            if (type.isEmpty()) continue;
+            if ("direct".equals(type) || "block".equals(type) || "dns".equals(type)
+                    || "selector".equals(type) || "urltest".equals(type)) {
+                continue;
+            }
+            if ("direct".equals(tag) || "block".equals(tag)) continue;
+            return convertJsonOutbound(candidate);
+        }
+        throw new IllegalArgumentException("No testable proxy outbound found");
     }
 
     private static String wrapProxyOutbound(JSONObject proxy) throws Exception {

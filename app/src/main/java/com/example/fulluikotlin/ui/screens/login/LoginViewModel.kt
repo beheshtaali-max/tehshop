@@ -2,6 +2,7 @@ package com.example.fulluikotlin.ui.screens.login
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -12,7 +13,10 @@ import kotlinx.coroutines.launch
 import com.example.fulluikotlin.data.local.datastore.AppDetailsDataStore
 import com.example.fulluikotlin.data.local.datastore.UserDataStore
 import com.example.fulluikotlin.domain.usecase.auth.LoginUseCase
+import com.example.fulluikotlin.domain.utils.AppErrorClassifier
+import com.example.fulluikotlin.domain.utils.AppErrorCode
 import com.example.fulluikotlin.domain.utils.Resource
+import com.example.fulluikotlin.infrastructure.reporting.FirebaseErrorReporter
 import com.example.fulluikotlin.infrastructure.network.NetworkConnectivityChecker
 
 
@@ -24,9 +28,6 @@ class LoginViewModel(
 
 ) : ViewModel() {
 
-    private companion object {
-        const val NO_INTERNET_MESSAGE = "اینترنت متصل نیست. لطفاً اینترنت را وصل کنید"
-    }
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -46,11 +47,24 @@ class LoginViewModel(
 
     private fun loadSavedCredentials() {
         viewModelScope.launch {
-            val (savedUsername, savedPassword) = userDataStore.getSavedCredentials()
-            if (!savedUsername.isNullOrBlank() && !savedPassword.isNullOrBlank()) {
+            try {
+                val (savedUsername, savedPassword) = userDataStore.getSavedCredentials()
+                if (!savedUsername.isNullOrBlank() && !savedPassword.isNullOrBlank()) {
+                    _uiState.value = _uiState.value.copy(
+                        username = savedUsername,
+                        password = savedPassword
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                FirebaseErrorReporter.report(
+                    errorCode = AppErrorCode.SESSION_READ_FAILED,
+                    context = "login_load_saved_credentials",
+                    throwable = error
+                )
                 _uiState.value = _uiState.value.copy(
-                    username = savedUsername,
-                    password = savedPassword
+                    errorMessage = AppErrorCode.SESSION_READ_FAILED.displayMessage()
                 )
             }
         }
@@ -85,7 +99,7 @@ class LoginViewModel(
         if (!networkConnectivityChecker.isInternetAvailable()) {
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
-                errorMessage = NO_INTERNET_MESSAGE
+                errorMessage = AppErrorCode.NETWORK_OFFLINE.displayMessage()
             )
             return
         }
@@ -109,20 +123,38 @@ class LoginViewModel(
                 }
 
                 is Resource.MultiLoginError -> {
-                    userDataStore.saveMultiLoginDevices(result.devices)  // ذخیره در DataStore
-                    userDataStore.saveMultiLoginCredentials(username, password, device)
+                    try {
+                        userDataStore.saveMultiLoginDevices(result.devices)
+                        userDataStore.saveMultiLoginCredentials(username, password, device)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        FirebaseErrorReporter.report(
+                            errorCode = AppErrorCode.LOCAL_STORAGE_FAILED,
+                            context = "save_multi_login_state",
+                            throwable = error
+                        )
+                    }
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         showMultiLoginSheet = true,
-                        errorMessage = "ظرفیت کاربری اکانت شما پر شده است"
+                        errorMessage = AppErrorCode.AUTH_DEVICE_LIMIT.displayMessage()
                     )
                 }
 
                 is Resource.Exception -> {
+                    val errorCode = AppErrorClassifier.classify(result.throwable)
+                    val supportCode = AppErrorClassifier.supportCode(result.throwable, errorCode)
+                    FirebaseErrorReporter.report(
+                        errorCode = errorCode,
+                        supportCode = supportCode,
+                        context = "manual_login",
+                        throwable = result.throwable
+                    )
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        errorMessage = result.throwable.message ?: "خطای شبکه"
+                        errorMessage = errorCode.displayMessage(supportCode)
                     )
                 }
 
@@ -132,17 +164,26 @@ class LoginViewModel(
         }
     }
 
+
+    fun showExternalError(message: String) {
+        if (message.isNotBlank()) {
+            _uiState.value = _uiState.value.copy(errorMessage = message)
+        }
+    }
+
     fun onUsernameChange(value: String) {
         _uiState.value = _uiState.value.copy(
             username = value,
-            usernameError = null
+            usernameError = null,
+            errorMessage = null
         )
     }
 
     fun onPasswordChange(value: String) {
         _uiState.value = _uiState.value.copy(
             password = value,
-            passwordError = null
+            passwordError = null,
+            errorMessage = null
         )
     }
 

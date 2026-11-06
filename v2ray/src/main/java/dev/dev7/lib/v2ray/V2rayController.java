@@ -2,6 +2,7 @@ package dev.dev7.lib.v2ray;
 
 import static android.Manifest.permission.POST_NOTIFICATIONS;
 import static android.content.Context.RECEIVER_EXPORTED;
+import static android.content.Context.RECEIVER_NOT_EXPORTED;
 import static dev.dev7.lib.v2ray.utils.V2rayConstants.SERVICE_CONNECTION_STATE_BROADCAST_EXTRA;
 import static dev.dev7.lib.v2ray.utils.V2rayConstants.SERVICE_TYPE_BROADCAST_EXTRA;
 import static dev.dev7.lib.v2ray.utils.V2rayConstants.V2RAY_SERVICE_COMMAND_EXTRA;
@@ -31,10 +32,16 @@ import androidx.core.content.PermissionChecker;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 import dev.dev7.lib.v2ray.core.SingBoxLatencyTester;
+import dev.dev7.lib.v2ray.core.SmartDelayRequestStore;
 import dev.dev7.lib.v2ray.interfaces.LatencyDelayListener;
+import dev.dev7.lib.v2ray.interfaces.RealDelayTestListener;
+import dev.dev7.lib.v2ray.model.RealDelayTestConfig;
+import dev.dev7.lib.v2ray.model.RealDelayTestHandle;
 import dev.dev7.lib.v2ray.services.V2rayProxyService;
 import dev.dev7.lib.v2ray.services.V2rayVPNService;
 import dev.dev7.lib.v2ray.utils.SafeLog;
@@ -196,6 +203,100 @@ public class V2rayController {
                 .setPackage(context.getPackageName())
                 .putExtra(V2RAY_SERVICE_COMMAND_EXTRA, V2rayConstants.SERVICE_COMMANDS.MEASURE_DELAY);
         context.sendBroadcast(delay);
+    }
+
+    /**
+     * Starts a real, parallel delay test. Each config is loaded as a sing-box outbound and a real
+     * HTTPS request to www.google.com is sent through it. Config bodies stay in process memory and
+     * are never placed in Intent extras.
+     */
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    public static RealDelayTestHandle startRealDelayTest(
+            final Context context,
+            final List<RealDelayTestConfig> configs,
+            final int maxConcurrency,
+            final RealDelayTestListener listener
+    ) {
+        if (context == null || listener == null) return null;
+        if (configs == null || configs.isEmpty()) {
+            listener.onError("No V2Ray servers are available");
+            return null;
+        }
+
+        final Context appContext = context.getApplicationContext();
+        final String requestId = UUID.randomUUID().toString();
+        SmartDelayRequestStore.put(requestId, configs, Math.max(1, maxConcurrency));
+
+        final RealDelayTestHandle[] handleRef = new RealDelayTestHandle[1];
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context receiverContext, Intent intent) {
+                if (intent == null) return;
+                String incomingRequestId = intent.getStringExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA);
+                if (!requestId.equals(incomingRequestId)) return;
+
+                String event = intent.getStringExtra(V2rayConstants.SMART_DELAY_EVENT_EXTRA);
+                if (V2rayConstants.SMART_DELAY_EVENT_PROGRESS.equals(event)) {
+                    listener.onProgress(
+                            intent.getIntExtra(V2rayConstants.SMART_DELAY_COMPLETED_EXTRA, 0),
+                            intent.getIntExtra(V2rayConstants.SMART_DELAY_TOTAL_EXTRA, configs.size()),
+                            safeString(intent.getStringExtra(V2rayConstants.SMART_DELAY_TESTED_SERVER_ID_EXTRA)),
+                            intent.getLongExtra(V2rayConstants.SMART_DELAY_TESTED_VALUE_EXTRA, -1L),
+                            safeString(intent.getStringExtra(V2rayConstants.SMART_DELAY_BEST_SERVER_ID_EXTRA)),
+                            intent.getLongExtra(V2rayConstants.SMART_DELAY_BEST_VALUE_EXTRA, -1L)
+                    );
+                    return;
+                }
+
+                try {
+                    if (V2rayConstants.SMART_DELAY_EVENT_COMPLETED.equals(event)) {
+                        listener.onCompleted(
+                                safeString(intent.getStringExtra(V2rayConstants.SMART_DELAY_BEST_SERVER_ID_EXTRA)),
+                                intent.getLongExtra(V2rayConstants.SMART_DELAY_BEST_VALUE_EXTRA, -1L)
+                        );
+                    } else if (V2rayConstants.SMART_DELAY_EVENT_CANCELLED.equals(event)) {
+                        listener.onCancelled();
+                    } else if (V2rayConstants.SMART_DELAY_EVENT_ERROR.equals(event)) {
+                        listener.onError(safeString(intent.getStringExtra(V2rayConstants.SMART_DELAY_ERROR_EXTRA)));
+                    }
+                } finally {
+                    SmartDelayRequestStore.remove(requestId);
+                    if (handleRef[0] != null) handleRef[0].release();
+                }
+            }
+        };
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(
+                    receiver,
+                    new IntentFilter(V2rayConstants.SMART_DELAY_TEST_BROADCAST_INTENT),
+                    RECEIVER_NOT_EXPORTED
+            );
+        } else {
+            appContext.registerReceiver(receiver, new IntentFilter(V2rayConstants.SMART_DELAY_TEST_BROADCAST_INTENT));
+        }
+
+        RealDelayTestHandle handle = new RealDelayTestHandle(appContext, requestId, receiver);
+        handleRef[0] = handle;
+
+        try {
+            Intent start = new Intent(appContext, V2rayVPNService.class)
+                    .setPackage(appContext.getPackageName())
+                    .putExtra(V2RAY_SERVICE_COMMAND_EXTRA, V2rayConstants.SERVICE_COMMANDS.START_SMART_DELAY_TEST)
+                    .putExtra(V2rayConstants.SMART_DELAY_REQUEST_ID_EXTRA, requestId);
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.N_MR1) appContext.startForegroundService(start);
+            else appContext.startService(start);
+            return handle;
+        } catch (Throwable t) {
+            SmartDelayRequestStore.remove(requestId);
+            handle.release();
+            listener.onError(t.getMessage() == null ? "Unable to start real delay test" : t.getMessage());
+            return null;
+        }
+    }
+
+    private static String safeString(String value) {
+        return value == null ? "" : value;
     }
 
     public static long getV2rayServerDelay(final String config) {

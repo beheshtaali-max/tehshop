@@ -308,23 +308,25 @@ fun UpdateDownloadingDialog(
                             .fillMaxWidth()
                     )
 
-                    OutlinedButton(
-                        onClick = onLaterClick,
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = MaterialTheme.fullColors.buttonDismissDialog
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = "بعدا؛ دانلود ادامه داشته باشد",
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.fullColors.textDismissDialog,
-                            textAlign = TextAlign.Center,
-                            fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
-                        )
+                    if (!model.forcedUpdate) {
+                        OutlinedButton(
+                            onClick = onLaterClick,
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.fullColors.buttonDismissDialog
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "بعدا؛ دانلود ادامه داشته باشد",
+                                modifier = Modifier.padding(vertical = 2.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.fullColors.textDismissDialog,
+                                textAlign = TextAlign.Center,
+                                fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
+                            )
+                        }
                     }
                 }
             }
@@ -341,10 +343,12 @@ fun UpdateReadyDialog(
     Dialog(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
+            dismissOnBackPress = !model.forcedUpdate,
+            dismissOnClickOutside = !model.forcedUpdate
         ),
-        onDismissRequest = onLaterClick
+        onDismissRequest = {
+            if (!model.forcedUpdate) onLaterClick()
+        }
     ) {
         Box(
             modifier = Modifier
@@ -396,26 +400,28 @@ fun UpdateReadyDialog(
                     )
 
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = onLaterClick,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = MaterialTheme.fullColors.buttonDismissDialog
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "بعدا",
-                                modifier = Modifier.padding(vertical = 2.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.fullColors.textDismissDialog,
-                                textAlign = TextAlign.Center,
-                                fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
-                            )
-                        }
+                        if (!model.forcedUpdate) {
+                            OutlinedButton(
+                                onClick = onLaterClick,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = MaterialTheme.fullColors.buttonDismissDialog
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = "بعدا",
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.fullColors.textDismissDialog,
+                                    textAlign = TextAlign.Center,
+                                    fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
+                                )
+                            }
 
-                        Spacer(modifier = Modifier.width(15.dp))
+                            Spacer(modifier = Modifier.width(15.dp))
+                        }
 
                         Button(
                             onClick = onInstallClick,
@@ -455,10 +461,12 @@ fun UpdateFailedDialog(
     Dialog(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
+            dismissOnBackPress = !model.forcedUpdate,
+            dismissOnClickOutside = !model.forcedUpdate
         ),
-        onDismissRequest = onLaterClick
+        onDismissRequest = {
+            if (!model.forcedUpdate) onLaterClick()
+        }
     ) {
         Box(
             modifier = Modifier
@@ -510,26 +518,28 @@ fun UpdateFailedDialog(
                     )
 
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = onLaterClick,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = MaterialTheme.fullColors.buttonDismissDialog
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "بعدا",
-                                modifier = Modifier.padding(vertical = 2.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.fullColors.textDismissDialog,
-                                textAlign = TextAlign.Center,
-                                fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
-                            )
-                        }
+                        if (!model.forcedUpdate) {
+                            OutlinedButton(
+                                onClick = onLaterClick,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = MaterialTheme.fullColors.buttonDismissDialog
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = "بعدا",
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.fullColors.textDismissDialog,
+                                    textAlign = TextAlign.Center,
+                                    fontFamily = FontFamily(Font(R.font.yekanbakh_bold))
+                                )
+                            }
 
-                        Spacer(modifier = Modifier.width(15.dp))
+                            Spacer(modifier = Modifier.width(15.dp))
+                        }
 
                         Button(
                             onClick = onRetryClick,

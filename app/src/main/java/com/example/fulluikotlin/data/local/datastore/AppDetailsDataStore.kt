@@ -6,8 +6,15 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.fulluikotlin.domain.model.Faq
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.json.Json
 
 
@@ -16,6 +23,7 @@ private val Context.appDetailsDataStore by preferencesDataStore(name = "app_deta
 class AppDetailsDataStore(private val context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true }
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val TELEGRAM_SUPPORT_ID = stringPreferencesKey("telegram_support_id")
     private val TELEGRAM_CHANNEL_ID = stringPreferencesKey("telegram_channel_id")
@@ -46,8 +54,13 @@ class AppDetailsDataStore(private val context: Context) {
     val instagramLinkFlow: Flow<String?> = context.appDetailsDataStore.data
         .map { it[INSTAGRAM_LINK] }
 
-    val defaultProtocolFlow: Flow<String?> = context.appDetailsDataStore.data
+    val defaultProtocolFlow: StateFlow<String?> = context.appDetailsDataStore.data
         .map { it[DEFAULT_PROTOCOL] }
+        .stateIn(
+            scope = cacheScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null
+        )
 
     val usagePeriodMinutesFlow: Flow<Long> = context.appDetailsDataStore.data
         .map { prefs ->
@@ -90,6 +103,9 @@ class AppDetailsDataStore(private val context: Context) {
     suspend fun saveDefaultProtocol(value: String) {
         context.appDetailsDataStore.edit { it[DEFAULT_PROTOCOL] = value }
     }
+
+    suspend fun getDefaultProtocol(): String? =
+        context.appDetailsDataStore.data.first()[DEFAULT_PROTOCOL]
 
     suspend fun saveUsagePeriodMinutes(value: Long) {
         context.appDetailsDataStore.edit {

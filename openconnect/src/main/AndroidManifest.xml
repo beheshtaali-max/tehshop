@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application>
+        <activity
+            android:name="net.openconnect_vpn.android.MainActivity"
+            android:exported="false"
+            android:label="@string/app" />
+        <activity
+            android:name="net.openconnect_vpn.android.api.GrantPermissionsActivity"
+            android:exported="false" />
+        <service
+            android:name="net.openconnect_vpn.android.core.OpenVpnService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Cisco/OpenConnect VPN tunnel" />
+        </service>
+    </application>
+</manifest>

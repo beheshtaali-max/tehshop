@@ -2,6 +2,8 @@ package com.example.fulluikotlin
 
 import android.app.Application
 import com.blongho.country_data.World
+import net.openconnect_vpn.android.core.FragCache
+import net.openconnect_vpn.android.core.ProfileManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext.startKoin
 import com.example.fulluikotlin.di.appModule
@@ -11,14 +13,18 @@ import com.example.fulluikotlin.di.repositoryModule
 class FullApp : Application() {
     override fun onCreate() {
         super.onCreate()
+
+        System.loadLibrary("openconnect")
+        System.loadLibrary("stoken")
+
+        ProfileManager.init(applicationContext)
+        FragCache.init()
+
         World.init(this)
+
         startKoin {
             androidContext(this@FullApp)
-            modules(
-                appModule,
-                networkModule,
-                repositoryModule
-            )
+            modules(appModule, networkModule, repositoryModule)
         }
     }
 }

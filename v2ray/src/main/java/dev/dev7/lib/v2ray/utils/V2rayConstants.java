@@ -8,6 +8,22 @@ public class V2rayConstants {
     public static final String V2RAY_SERVICE_CURRENT_CONFIG_DELAY_BROADCAST_EXTRA = "V2RAY_SERVICE_CURRENT_CONFIG_DELAY_EXTRA";
     public static final String V2RAY_SERVICE_COMMAND_EXTRA = "V2RAY_SERVICE_COMMAND_EXTRA";
     public static final String V2RAY_SERVICE_CONFIG_EXTRA = "V2RAY_SERVICE_CONFIG_EXTRA";
+
+    public static final String SMART_DELAY_TEST_BROADCAST_INTENT = "SMART_DELAY_TEST_BROADCAST_INTENT";
+    public static final String SMART_DELAY_REQUEST_ID_EXTRA = "SMART_DELAY_REQUEST_ID_EXTRA";
+    public static final String SMART_DELAY_EVENT_EXTRA = "SMART_DELAY_EVENT_EXTRA";
+    public static final String SMART_DELAY_COMPLETED_EXTRA = "SMART_DELAY_COMPLETED_EXTRA";
+    public static final String SMART_DELAY_TOTAL_EXTRA = "SMART_DELAY_TOTAL_EXTRA";
+    public static final String SMART_DELAY_TESTED_SERVER_ID_EXTRA = "SMART_DELAY_TESTED_SERVER_ID_EXTRA";
+    public static final String SMART_DELAY_TESTED_VALUE_EXTRA = "SMART_DELAY_TESTED_VALUE_EXTRA";
+    public static final String SMART_DELAY_BEST_SERVER_ID_EXTRA = "SMART_DELAY_BEST_SERVER_ID_EXTRA";
+    public static final String SMART_DELAY_BEST_VALUE_EXTRA = "SMART_DELAY_BEST_VALUE_EXTRA";
+    public static final String SMART_DELAY_ERROR_EXTRA = "SMART_DELAY_ERROR_EXTRA";
+
+    public static final String SMART_DELAY_EVENT_PROGRESS = "progress";
+    public static final String SMART_DELAY_EVENT_COMPLETED = "completed";
+    public static final String SMART_DELAY_EVENT_CANCELLED = "cancelled";
+    public static final String SMART_DELAY_EVENT_ERROR = "error";
     public static final String SERVICE_CONNECTION_STATE_BROADCAST_EXTRA = "CONNECTION_STATE_EXTRA";
     public static final String SERVICE_TYPE_BROADCAST_EXTRA = "SERVICE_TYPE_EXTRA";
     public static final String SERVICE_CORE_STATE_BROADCAST_EXTRA = "CORE_STATE_EXTRA";
@@ -23,7 +39,7 @@ public class V2rayConstants {
     public static final long GIGA_BYTE = MEGA_BYTE * 1024;
 
     public enum SERVICE_MODES { VPN_MODE, PROXY_MODE }
-    public enum SERVICE_COMMANDS { START_SERVICE, STOP_SERVICE, MEASURE_DELAY }
+    public enum SERVICE_COMMANDS { START_SERVICE, STOP_SERVICE, MEASURE_DELAY, START_SMART_DELAY_TEST, CANCEL_SMART_DELAY_TEST }
     public enum CONNECTION_STATES { CONNECTED, CONNECTING, DISCONNECTED }
     public enum CORE_STATES { RUNNING, IDLE, STOPPED }
 

@@ -6,6 +6,7 @@ import com.example.fulluikotlin.infrastructure.vpn.VpnOrchestrator
 import com.example.fulluikotlin.infrastructure.vpn.traffic.VpnUsageTracker
 import com.example.fulluikotlin.infrastructure.vpn.adapters.V2rayAdapter
 import com.example.fulluikotlin.infrastructure.vpn.adapters.SSHAdapter
+import com.example.fulluikotlin.infrastructure.vpn.adapters.CiscoAdapter
 import com.example.fulluikotlin.ui.main.MainViewModel
 import com.example.fulluikotlin.ui.screens.activeservice.ActiveServiceViewModel
 import com.example.fulluikotlin.ui.screens.devicesactive.DevicesViewModel
@@ -33,6 +34,7 @@ val appModule = module {
     // VPN Adapters
     factory { V2rayAdapter(androidContext(), get(), get()) }
     factory { SSHAdapter(androidContext(), get(), get()) }
+    factory { CiscoAdapter(androidContext(), get(), get()) }
 
     // Factory و Orchestrator
     single { VpnAdapterFactory() }
@@ -48,11 +50,11 @@ val appModule = module {
 
     single { SettingsDataStore(androidContext()) }
 
-    single { ServerDataStore(androidContext()) }
+    single(createdAtStart = true) { ServerDataStore(androidContext()) }
 
     single { SplitTunnelDataStore(get()) }
 
-    single { AppDetailsDataStore(androidContext()) }
+    single(createdAtStart = true) { AppDetailsDataStore(androidContext()) }
 
 
     // ViewModel
@@ -68,7 +70,7 @@ val appModule = module {
 
     viewModel { V2rayViewModel(get(), get(), get(), get()) }
 
-    viewModel { ServersViewModel(get()) }
+    viewModel { ServersViewModel(get(), get()) }
 
     viewModel { HomeViewModel(androidApplication(), get(), get(), get(), get(), get()) } // Application, VpnOrchestrator, ServerDataStore, ServersUseCase, UserDataStore, LoginUseCase
 

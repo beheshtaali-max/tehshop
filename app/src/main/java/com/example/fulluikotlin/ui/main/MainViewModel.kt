@@ -104,6 +104,10 @@ class MainViewModel(
     }
 
     fun dismissCurrentDialog(waitForForeground: Boolean = false) {
+        // A mandatory update must remain a blocking state until the new APK is installed.
+        // This also protects against accidental dismiss calls outside the dialog UI.
+        if (isForcedUpdateState(_currentDialog.value)) return
+
         if (waitForForeground) {
             // بررسی می‌کنیم که دیالوگ بعدی در صف چیست
             val nextDialog = dialogQueue.firstOrNull()
@@ -136,9 +140,9 @@ class MainViewModel(
     }
 
     fun hideUpdateDownloadDialog() {
-        if (_currentDialog.value is DialogState.UpdateDownloading) {
-            _currentDialog.value = DialogState.None
-        }
+        val downloadingDialog = _currentDialog.value as? DialogState.UpdateDownloading ?: return
+        if (downloadingDialog.data.forcedUpdate) return
+        _currentDialog.value = DialogState.None
     }
 
     fun retryUpdateDownload() {
@@ -154,7 +158,7 @@ class MainViewModel(
         val readyDialog = _currentDialog.value as? DialogState.UpdateReady
         val apkPath = readyDialog?.apkPath ?: downloadedUpdateFile?.absolutePath ?: return
         val installStarted = ApkUpdateManager.installApk(appContext, apkPath)
-        if (installStarted) {
+        if (installStarted && readyDialog?.data?.forcedUpdate != true) {
             dismissCurrentDialog(waitForForeground = false)
         }
     }
@@ -209,6 +213,14 @@ class MainViewModel(
                 updateDownloadJob = null
             }
         }
+    }
+
+    private fun isForcedUpdateState(state: DialogState): Boolean = when (state) {
+        is DialogState.Update -> state.data.forcedUpdate
+        is DialogState.UpdateDownloading -> state.data.forcedUpdate
+        is DialogState.UpdateReady -> state.data.forcedUpdate
+        is DialogState.UpdateFailed -> state.data.forcedUpdate
+        else -> false
     }
 
     fun onCustomInfoClicked(link: String) {

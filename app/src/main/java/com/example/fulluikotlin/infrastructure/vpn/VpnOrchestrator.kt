@@ -232,15 +232,16 @@ class VpnOrchestrator(
         usageTracker.startRuntimeAccounting(protocol.name)
         UserInfoUpdateService.start(appContext)
 
-        val newController = factory.create(protocol)
-        currentController = newController
-        currentProtocol = protocol
-        launchCollectors(newController, server.servername)
-        startConnectingTimeoutWatch(sessionId, server.servername)
-
-        runCatching {
-            newController.connect(server, protocol, activity)
-        }.onFailure { throwable ->
+        var newController: VpnController? = null
+        try {
+            val createdController = factory.create(protocol)
+            newController = createdController
+            currentController = createdController
+            currentProtocol = protocol
+            launchCollectors(createdController, server.servername)
+            startConnectingTimeoutWatch(sessionId, server.servername, protocol)
+            createdController.connect(server, protocol, activity)
+        } catch (throwable: Throwable) {
             if (connectionSessionId == sessionId) {
                 Log.e("Orchestrator", "connect failed: protocol=$protocol server=${server.servername}", throwable)
                 cancelConnectingTimeoutWatch()
@@ -249,13 +250,18 @@ class VpnOrchestrator(
                 UserInfoUpdateService.stop(appContext)
                 stopNotificationService()
             }
-            runCatching { newController.disconnect() }
+            runCatching { newController?.disconnect() }
+            runCatching { newController?.release() }
+            if (currentController === newController) {
+                currentController = null
+                currentProtocol = null
+            }
         }
 
         if (connectionSessionId != sessionId) {
             Log.d("Orchestrator", "connect result ignored because session was cancelled: server=${server.servername}")
-            runCatching { newController.disconnect() }
-            runCatching { newController.release() }
+            runCatching { newController?.disconnect() }
+            runCatching { newController?.release() }
         }
     }
 
@@ -312,13 +318,14 @@ class VpnOrchestrator(
     }
 
 
-    private fun startConnectingTimeoutWatch(sessionId: Long, serverName: String) {
+    private fun startConnectingTimeoutWatch(sessionId: Long, serverName: String, protocol: ProtocolType) {
         cancelConnectingTimeoutWatch()
         connectingTimeoutJob = orchestratorScope.launch {
-            delay(CONNECTING_TIMEOUT_MS)
+            val timeoutMs = if (protocol == ProtocolType.CISCO) CISCO_CONNECTING_TIMEOUT_MS else CONNECTING_TIMEOUT_MS
+            delay(timeoutMs)
             if (connectionSessionId == sessionId && _connectionState.value is ConnectionState.Connecting) {
                 Log.w("Orchestrator", "connection timeout while connecting: server=$serverName")
-                launch { disconnect(flushUsage = true) }
+                disconnect(flushUsage = true)
             }
         }
     }
@@ -379,6 +386,7 @@ class VpnOrchestrator(
 
     companion object {
         private const val CONNECTING_TIMEOUT_MS = 45_000L
+        private const val CISCO_CONNECTING_TIMEOUT_MS = 30_000L
         private const val CONNECTION_PREFS_NAME = "vpn_connection_timer"
         private const val CONNECTION_STARTED_AT_KEY = "connection_started_at_millis"
     }

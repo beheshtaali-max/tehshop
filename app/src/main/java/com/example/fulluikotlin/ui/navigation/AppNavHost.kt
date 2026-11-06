@@ -3,9 +3,11 @@ package com.example.fulluikotlin.ui.navigation
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.fulluikotlin.ui.main.MainScreen
 import com.example.fulluikotlin.ui.screens.login.LoginScreen
 import com.example.fulluikotlin.ui.screens.splash.SplashScreen
@@ -25,8 +27,20 @@ fun AppNavHost() {
             SplashScreen(navController)
         }
 
-        composable("login") {
-            LoginScreen(navController)
+        composable(
+            route = "login?notice={notice}",
+            arguments = listOf(
+                navArgument("notice") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            LoginScreen(
+                navController = navController,
+                initialErrorMessage = backStackEntry.arguments?.getString("notice")
+            )
         }
 
         composable("main") {

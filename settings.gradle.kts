@@ -33,7 +33,7 @@ dependencyResolutionManagement {
 //            url = uri("https://mirror-maven.runflare.com/gradle-plugins/")
 //        }
 //    }
-
+//
     repositories {
         google()
         mavenCentral()
@@ -48,3 +48,5 @@ rootProject.name = "TehVPN-Kotlin"
 
 include(":app")
 include(":v2ray")
+
+include(":openconnect")

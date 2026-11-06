@@ -1,5 +1,7 @@
 package com.example.fulluikotlin.data.local.network.api
 
+import com.example.fulluikotlin.data.local.network.ApiHttpException
+import com.example.fulluikotlin.data.local.network.ApiResponseException
 import com.example.fulluikotlin.data.local.network.NetworkRequestExecutor
 import com.example.fulluikotlin.data.local.network.interceptor.AuthInterceptor
 import io.ktor.client.HttpClient
@@ -8,9 +10,6 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.request
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.isSuccess
-import io.ktor.client.call.body
-import io.ktor.client.request.request
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
@@ -47,12 +46,12 @@ abstract class BaseApiService(
             }
 
             if (!response.status.isSuccess()) {
-                throw IllegalStateException("HTTP ${response.status.value}")
+                throw ApiHttpException(response.status.value)
             }
 
             val responseBody: T = response.body()
             if (!isSuccessful(responseBody)) {
-                throw IllegalStateException("Server returned an unsuccessful response")
+                throw ApiResponseException()
             }
 
             responseBody

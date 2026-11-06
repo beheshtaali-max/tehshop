@@ -1,6 +1,6 @@
 package com.example.fulluikotlin.ui.screens.splash
 
-import android.widget.Toast
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -29,7 +29,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -59,14 +58,6 @@ fun SplashScreen(
     val splashViewModel = viewModel ?: koinViewModel()
 
     val uiState by splashViewModel.uiState.collectAsState()
-    val context = LocalContext.current
-
-    // نمایش خطا با Toast (هر بار که errorMessage تغییر کند)
-    LaunchedEffect(uiState.errorMessage) {
-        if (!uiState.isLoading && uiState.errorMessage != null) {
-            Toast.makeText(context, uiState.errorMessage, Toast.LENGTH_LONG).show()
-        }
-    }
     LaunchedEffect(uiState.isLoggedIn, uiState.isLoading) {
         if (!uiState.isLoading && uiState.isLoggedIn != null) {
             if (uiState.isLoggedIn == true) {
@@ -74,7 +65,10 @@ fun SplashScreen(
                     popUpTo("splash") { inclusive = true }
                 }
             } else {
-                navController.navigate("login") {
+                val loginRoute = uiState.errorMessage
+                    ?.let { "login?notice=${Uri.encode(it)}" }
+                    ?: "login"
+                navController.navigate(loginRoute) {
                     popUpTo("splash") { inclusive = true }
                 }
             }
@@ -185,8 +179,18 @@ fun SplashContent(
                 }
 
                 showRetry && errorMessage != null -> {
-                    Spacer(modifier = Modifier.height(32.dp))
-
+                    Text(
+                        text = errorMessage,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 28.dp)
+                            .padding(bottom = 125.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.fullColors.red2,
+                        textAlign = TextAlign.Center,
+                        fontFamily = FontFamily(Font(R.font.yekanbakh_medium))
+                    )
 
                     Button(
                         onClick = onRetry,

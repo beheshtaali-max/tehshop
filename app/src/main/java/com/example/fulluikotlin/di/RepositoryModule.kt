@@ -20,7 +20,7 @@ import com.example.fulluikotlin.data.local.repository.ServersRepositoryImpl
 import com.example.fulluikotlin.domain.usecase.auth.UsageUseCase
 
 val repositoryModule = module {
-    single<AuthRepository> { AuthRepositoryImpl(get(), get(), get()) }
+    single<AuthRepository> { AuthRepositoryImpl(get(), get(), get(), get()) }
 
     factory { UsageUseCase(get()) }
     factory { LoginUseCase(get()) }
