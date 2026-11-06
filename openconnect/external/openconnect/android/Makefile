@@ -314,12 +314,13 @@ endif
 
 $(OC_SYSROOT)/lib/liblz4.a: $(OC_SYSROOT) $(LZ4_DIR)/Makefile
 	$(MAKE) -C $(LZ4_DIR)/lib \
+		PREFIX=$(OC_SYSROOT) \
+		BINDIR=$(OC_SYSROOT)/bin \
 		LIBDIR=$(OC_SYSROOT)/lib \
 		INCLUDEDIR=$(OC_SYSROOT)/include \
 		CFLAGS="$(EXTRA_CFLAGS) $(LZ4_EXTRA_CFLAGS)" \
 		BUILD_SHARED=no \
 		install
-
 LZ4_DEPS := $(OC_SYSROOT)/lib/liblz4.a
 
 lz4: $(LZ4_DEPS)
