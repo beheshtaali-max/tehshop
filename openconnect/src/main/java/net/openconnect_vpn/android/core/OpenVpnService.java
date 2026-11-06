@@ -360,7 +360,7 @@ public class OpenVpnService extends VpnService {
 			mNotificationActive = true;
 
 			Notification.Builder builder = new Notification.Builder(this)
-		            .setSmallIcon(R.drawable.ic_stat_vpn)
+		            .setSmallIcon(android.R.drawable.ic_lock_lock)
 		            .setContentTitle(getString(R.string.notification_input_needed))
 		            .setContentText(getString(R.string.notification_touch_here))
 		            .setContentIntent(getMainActivityIntent());
