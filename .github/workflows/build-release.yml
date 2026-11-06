@@ -61,6 +61,46 @@ jobs:
           test -s openconnect/libs/stoken-wrapper.jar
           echo "All OpenConnect outputs verified."
 
+      - name: Validate PNG files
+        run: |
+          python3 - <<'PY'
+          import struct, zlib
+          from pathlib import Path
+          errors = []
+          count = 0
+          for root in ("app/src/main/res", "openconnect/src/main/res"):
+              for f in Path(root).rglob("*.png"):
+                  count += 1
+                  d = f.read_bytes()
+                  if not d.startswith(bytes.fromhex("89504e470d0a1a0a")):
+                      errors.append(f"{f}: invalid signature")
+                      continue
+                  pos = 8
+                  ended = False
+                  while pos + 12 <= len(d):
+                      n = struct.unpack(">I", d[pos:pos+4])[0]
+                      end = pos + 12 + n
+                      if end > len(d):
+                          errors.append(f"{f}: truncated chunk")
+                          break
+                      chunk = d[pos+4:pos+8+n]
+                      crc = struct.unpack(">I", d[pos+8+n:end])[0]
+                      if zlib.crc32(chunk) & 0xffffffff != crc:
+                          errors.append(f"{f}: CRC mismatch")
+                          break
+                      if d[pos+4:pos+8] == b"IEND":
+                          ended = True
+                          if end != len(d): errors.append(f"{f}: trailing data")
+                          break
+                      pos = end
+                  if not ended and not any(str(f) in e for e in errors):
+                      errors.append(f"{f}: missing IEND")
+          print(f"Checked {count} PNG files")
+          if errors:
+              print("\n".join(errors))
+              raise SystemExit(1)
+          print("All PNG files passed validation.")
+          PY
       - name: Build Debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
 
