@@ -295,7 +295,7 @@ class VpnOrchestrator(
                     }
                     ConnectionState.Connecting -> Unit
                     ConnectionState.Disconnected -> {
-                        cancelConnectingTimeoutWatch()
+                        if (currentProtocol != ProtocolType.CISCO) cancelConnectingTimeoutWatch()
                         if (currentController === controller) {
                             usageTracker.stopRuntimeAccounting()
                             UserInfoUpdateService.stop(appContext)
@@ -303,7 +303,7 @@ class VpnOrchestrator(
                         }
                     }
                     is ConnectionState.Error -> {
-                        cancelConnectingTimeoutWatch()
+                        if (currentProtocol != ProtocolType.CISCO) cancelConnectingTimeoutWatch()
                         if (currentController === controller) {
                             usageTracker.stopRuntimeAccounting()
                             UserInfoUpdateService.stop(appContext)
@@ -324,8 +324,11 @@ class VpnOrchestrator(
         connectingTimeoutJob = orchestratorScope.launch {
             val timeoutMs = if (protocol == ProtocolType.CISCO) CISCO_CONNECTING_TIMEOUT_MS else CONNECTING_TIMEOUT_MS
             delay(timeoutMs)
-            if (connectionSessionId == sessionId && _connectionState.value is ConnectionState.Connecting) {
-                Log.w("Orchestrator", "connection timeout while connecting: server=$serverName")
+            val state = _connectionState.value
+            val shouldTimeout = if (protocol == ProtocolType.CISCO) state !is ConnectionState.Connected else state is ConnectionState.Connecting
+            if (connectionSessionId == sessionId && currentProtocol == protocol && shouldTimeout) {
+                Log.w("Orchestrator", "connection timeout: protocol=$protocol server=$serverName state=$state")
+                connectingTimeoutJob = null
                 disconnect(flushUsage = true)
             }
         }
