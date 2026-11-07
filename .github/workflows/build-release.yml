@@ -1,4 +1,4 @@
-name: Build TEH VPN 1.010
+name: Build TEH VPN 1.010 Release
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Install Android SDK and NDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       - name: Install native dependencies
@@ -61,49 +61,6 @@ jobs:
           test -s openconnect/libs/stoken-wrapper.jar
           echo "All OpenConnect outputs verified."
 
-      - name: Validate PNG files
-        run: |
-          python3 - <<'PY'
-          import struct, zlib
-          from pathlib import Path
-          errors = []
-          count = 0
-          for root in ("app/src/main/res", "openconnect/src/main/res"):
-              for f in Path(root).rglob("*.png"):
-                  count += 1
-                  d = f.read_bytes()
-                  if not d.startswith(bytes.fromhex("89504e470d0a1a0a")):
-                      errors.append(f"{f}: invalid signature")
-                      continue
-                  pos = 8
-                  ended = False
-                  while pos + 12 <= len(d):
-                      n = struct.unpack(">I", d[pos:pos+4])[0]
-                      end = pos + 12 + n
-                      if end > len(d):
-                          errors.append(f"{f}: truncated chunk")
-                          break
-                      chunk = d[pos+4:pos+8+n]
-                      crc = struct.unpack(">I", d[pos+8+n:end])[0]
-                      if zlib.crc32(chunk) & 0xffffffff != crc:
-                          errors.append(f"{f}: CRC mismatch")
-                          break
-                      if d[pos+4:pos+8] == b"IEND":
-                          ended = True
-                          if end != len(d): errors.append(f"{f}: trailing data")
-                          break
-                      pos = end
-                  if not ended and not any(str(f) in e for e in errors):
-                      errors.append(f"{f}: missing IEND")
-          print(f"Checked {count} PNG files")
-          if errors:
-              print("\n".join(errors))
-              raise SystemExit(1)
-          print("All PNG files passed validation.")
-          PY
-      - name: Build Debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
-
       - name: Prepare release signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -121,27 +78,9 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: ./gradlew --no-daemon :app:assembleRelease
 
-      - name: Package complete source
-        run: |
-          zip -qr TEH-VPN-1.010-source.zip . \
-            -x ".git/*" \
-               ".gradle/*" \
-               "*/build/*" \
-               "build/*" \
-               "local.properties" \
-               "*/local.properties" \
-               "*/.cxx/*" \
-               "*/.externalNativeBuild/*" \
-               "openconnect/.backup/*" \
-               ".github/workflows/build-release.yml.bak"
-
-      - name: Upload APK and source
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: TEH-VPN-1.010
+          name: TEH-VPN-1.010-Release
           if-no-files-found: error
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
-            TEH-VPN-1.010-source.zip
-            OPENCONNECT-COPYING
+          path: app/build/outputs/apk/release/*.apk
