@@ -20,6 +20,7 @@ object VpnTrafficConstants {
 
     const val PROTOCOL_V2RAY = "V2RAY"
     const val PROTOCOL_OPENVPN = "OPENVPN"
+    const val PROTOCOL_CISCO = "CISCO"
     const val PROTOCOL_SSH = "SSH"
 
     const val STATE_CONNECTING = "CONNECTING"

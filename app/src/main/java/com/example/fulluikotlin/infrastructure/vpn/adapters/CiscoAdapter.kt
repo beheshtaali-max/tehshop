@@ -8,6 +8,7 @@ import com.example.fulluikotlin.data.local.datastore.SplitTunnelDataStore
 import com.example.fulluikotlin.data.local.datastore.UserDataStore
 import com.example.fulluikotlin.domain.model.ProtocolType
 import com.example.fulluikotlin.domain.model.Server
+import com.example.fulluikotlin.infrastructure.vpn.traffic.VpnTrafficConstants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -64,8 +65,10 @@ class CiscoAdapter(
 
         connector = object : VPNConnector(appContext, false) {
             override fun onUpdate(service: OpenVpnService) {
+                Log.d("CiscoAdapter", "onUpdate state=${service.getConnectionState()} statsValid=$statsValid")
                 when (service.getConnectionState()) {
                     OpenConnectManagementThread.STATE_CONNECTED -> {
+                        Log.d("CiscoAdapter", "markConnected from onUpdate")
                         everConnected = true
                         markConnected(activeServer)
                     }
@@ -77,10 +80,26 @@ class CiscoAdapter(
                     else -> markConnecting()
                 }
                 if (statsValid) {
-                    setTraffic(
-                        downloadBps = deltaStats.rxBytes.coerceAtLeast(0L),
-                        uploadBps = deltaStats.txBytes.coerceAtLeast(0L)
-                    )
+                    val connectionStatus = service.getConnectionState()
+                    val trafficState = when {
+                        connectionStatus == OpenConnectManagementThread.STATE_CONNECTED -> VpnTrafficConstants.STATE_CONNECTED
+                        connectionStatus == OpenConnectManagementThread.STATE_DISCONNECTED && everConnected -> VpnTrafficConstants.STATE_DISCONNECTED
+                        else -> null
+                    }
+                    if (trafficState != null) {
+                        appContext.sendBroadcast(Intent(VpnTrafficConstants.ACTION_PROTOCOL_TRAFFIC).apply {
+                            setPackage(appContext.packageName)
+                            putExtra(VpnTrafficConstants.EXTRA_PROTOCOL, VpnTrafficConstants.PROTOCOL_CISCO)
+                            putExtra(VpnTrafficConstants.EXTRA_STATE, trafficState)
+                            putExtra(VpnTrafficConstants.EXTRA_DOWNLOAD_TOTAL, newStats.rxBytes.coerceAtLeast(0L))
+                            putExtra(VpnTrafficConstants.EXTRA_UPLOAD_TOTAL, newStats.txBytes.coerceAtLeast(0L))
+                            putExtra(VpnTrafficConstants.EXTRA_DOWNLOAD_SPEED, deltaStats.rxBytes.coerceAtLeast(0L))
+                            putExtra(VpnTrafficConstants.EXTRA_UPLOAD_SPEED, deltaStats.txBytes.coerceAtLeast(0L))
+                            putExtra(VpnTrafficConstants.EXTRA_DURATION_SECONDS, 0L)
+                            putExtra(VpnTrafficConstants.EXTRA_TIMESTAMP, System.currentTimeMillis())
+                        })
+                        if (trafficState == VpnTrafficConstants.STATE_DISCONNECTED) everConnected = false
+                    }
                 }
             }
         }
@@ -109,6 +128,7 @@ class CiscoAdapter(
                         OpenConnectManagementThread.STATE_CONNECTED -> {
                             everConnected = true
                             markConnected(activeServer)
+                            Log.d("CiscoAdapter", "markConnected from polling")
                         }
                         OpenConnectManagementThread.STATE_DISCONNECTED -> {
                             if (everConnected) markDisconnected()

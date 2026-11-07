@@ -268,6 +268,7 @@ class VpnOrchestrator(
     private fun launchCollectors(controller: VpnController, serverName: String) {
         collectorJobs += orchestratorScope.launch {
             controller.connectionState.collect { state ->
+                Log.d("Orchestrator", "controller state received: $state server=$serverName")
                 when (state) {
                     ConnectionState.Connected -> {
                         if (_connectionStartedAtMillis.value <= 0L) {

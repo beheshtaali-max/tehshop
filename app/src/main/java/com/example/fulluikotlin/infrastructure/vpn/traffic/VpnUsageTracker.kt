@@ -154,7 +154,7 @@ class VpnUsageTracker(
         // VpnStatus.ByteCountListener. Interface polling can race with those broadcasts
         // and zero/override the totals shown on the home screen, so keep OpenVPN on the
         // protocol-broadcast path only.
-        if (protocol.equals(VpnTrafficConstants.PROTOCOL_OPENVPN, ignoreCase = true)) {
+        if (protocol.equals(VpnTrafficConstants.PROTOCOL_OPENVPN, ignoreCase = true) || protocol.equals(VpnTrafficConstants.PROTOCOL_CISCO, ignoreCase = true)) {
             runtimeAccountingJob?.cancel()
             runtimeAccountingJob = null
             Log.d(TAG, "runtime accounting uses protocol broadcast source protocol=$protocol")
@@ -288,6 +288,7 @@ class VpnUsageTracker(
         val upTotal = event.uploadTotalBytes.coerceAtLeast(0L)
         val shouldAccountFromProtocol = synchronized(prefsLock) {
             event.protocol.equals(VpnTrafficConstants.PROTOCOL_OPENVPN, ignoreCase = true) ||
+                event.protocol.equals(VpnTrafficConstants.PROTOCOL_CISCO, ignoreCase = true) ||
                 !runtimeInterfaceCounterAvailable
         }
 
